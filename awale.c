@@ -11,10 +11,8 @@ typedef struct {
 
 void init_plateau(Plateau *plateau) {
     for (int i = 0; i < CASES; i++) {
-        plateau->cases[i] = 0;
+        plateau->cases[i] = 4;
     }
-    plateau->cases[2] = 4;
-    plateau->cases[3] = 2;
     plateau->score[0] = 0;
     plateau->score[1] = 0;
 }
@@ -29,21 +27,30 @@ int check_famine(Plateau *plateau, int joueur) {
     
     for (int i = debut; i < fin; i++) {
         if (plateau->cases[i] > 0) {
-            
             return 0;
         }
     }
-    printf("Famine pour le joueur %d\n", joueur + 1);
     return 1;
+}
+
+void enregistrer_plateau(FILE *fichier, Plateau *plateau) {
+    fprintf(fichier, "\n  --- Plateau de jeu Awalé ---\n\n");
+    fprintf(fichier, "      +---+---+---+---+---+---+\n      ");
+    for (int i = 11; i >= 6; i--) {
+        fprintf(fichier, " %2d ", plateau->cases[i]);
+    }
+    fprintf(fichier, "\nJ2    +---+---+---+---+---+---+\nJ1    +---+---+---+---+---+---+\n      ");
+    for (int i = 0; i < 6; i++) {
+        fprintf(fichier, " %2d ", plateau->cases[i]);
+    }
+    fprintf(fichier, "\n      +---+---+---+---+---+---+\n");
+    fprintf(fichier, "Score Joueur 1: %d | Score Joueur 2: %d\n", plateau->score[0], plateau->score[1]);
 }
 
 int jouer_coup(Plateau *plateau, int joueur, int case_choisie) {
     int graines = plateau->cases[case_choisie];
-    
     plateau->cases[case_choisie] = 0;
     int position = case_choisie;
-
-    
 
     while (graines > 0) {
         position = (position + 1) % CASES;
@@ -62,28 +69,18 @@ int jouer_coup(Plateau *plateau, int joueur, int case_choisie) {
     return plateau->score[joueur] > MAX_GRAINS / 2;
 }
 
-
 void afficher_plateau(Plateau *plateau) {
     printf("\n  --- Plateau de jeu Awalé ---\n");
-    printf("\n      ");printf("+---+---+---+---+---+---+\n");
-    printf("      ");
+    printf("     pour quitter, entrez 0   ");
+    printf("\n      +---+---+---+---+---+---+\n      ");
     for (int i = 11; i >= 6; i--) {
         printf(" %2d ", plateau->cases[i]);
     }
-    printf("\n");
-
-    printf("J2    ");
-    printf("+---+---+---+---+---+---+\n");
-
-    printf("J1    ");
-    printf("+---+---+---+---+---+---+\n");
-
-    printf("      ");
+    printf("\nJ2    +---+---+---+---+---+---+\nJ1    +---+---+---+---+---+---+\n      ");
     for (int i = 0; i < 6; i++) {
         printf(" %2d ", plateau->cases[i]);
     }
-    printf("\n      ");printf("+---+---+---+---+---+---+\n");
-
+    printf("\n      +---+---+---+---+---+---+\n");
     printf("Score Joueur 1: %d | Score Joueur 2: %d\n", plateau->score[0], plateau->score[1]);
 }
 
@@ -92,38 +89,57 @@ int main() {
     int joueur = 0, case_choisie;
 
     init_plateau(&plateau);
+    
+    FILE *fichier = fopen("partie.txt", "w");
+    if (fichier == NULL) {
+        printf("Erreur lors de l'ouverture du fichier.\n");
+        return 1;
+    }
+
+    fprintf(fichier, "Début de la partie\n");
+    enregistrer_plateau(fichier, &plateau);
 
     while (1) {
         afficher_plateau(&plateau);
+        fprintf(fichier, "\nTour du joueur %d\n", joueur + 1);
+        
         printf("Joueur %d, choisissez une case (1-6): ", joueur + 1);
         scanf("%d", &case_choisie);
-        case_choisie--; // Ajustement pour convertir 1-6 en index 0-5
+        if(case_choisie == 0) {
+            break;
+        }
+        case_choisie--; 
 
         int index = case_choisie + (joueur == 1 ? 6 : 0);
 
         if (check_famine(&plateau, 1 - joueur)) {
             int derniere_position = (case_choisie + plateau.cases[case_choisie]) % CASES;
-            
             if (!(derniere_position >= CASES / 2 * (1 - joueur) && derniere_position < CASES / 2 * (2 - joueur))) {
                 printf("Coup invalide : vous devez nourrir l'adversaire.\n");
+                fprintf(fichier, "Coup invalide : famine détectée pour l'adversaire\n");
                 continue;
             }
         }
 
-
         if (case_choisie < 0 || case_choisie >= 6 || plateau.cases[index] == 0) {
             printf("Coup invalide.\n");
+            fprintf(fichier, "Coup invalide\n");
             continue;
         }
 
         if (jouer_coup(&plateau, joueur, index)) {
             afficher_plateau(&plateau);
+            enregistrer_plateau(fichier, &plateau);
             printf("Joueur %d gagne !\n", joueur + 1);
+            fprintf(fichier, "Joueur %d gagne !\n", joueur + 1);
             break;
         }
 
+        enregistrer_plateau(fichier, &plateau);
         joueur = 1 - joueur;
     }
 
+    fprintf(fichier, "Fin de la partie\n");
+    fclose(fichier);
     return 0;
 }
