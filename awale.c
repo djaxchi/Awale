@@ -24,11 +24,12 @@ int est_dans_camp_adverse(int joueur, int position) {
 }
 
 int check_famine(Plateau *plateau, int joueur) {
-    int debut = (joueur == 1) ? 0 : CASES / 2;
-    int fin = (joueur == 1) ? CASES / 2 : CASES;
+    int debut = (joueur == 0) ? 0 : CASES / 2;
+    int fin = (joueur == 0) ? CASES / 2 : CASES;
     
     for (int i = debut; i < fin; i++) {
         if (plateau->cases[i] > 0) {
+            
             return 0;
         }
     }
@@ -100,12 +101,15 @@ int main() {
 
         int index = case_choisie + (joueur == 1 ? 6 : 0);
 
-        if(check_famine(&plateau, 1 - joueur)) {
-            if(plateau.cases[case_choisie]+case_choisie < CASES / 2 * (2 - joueur) && plateau.cases[case_choisie]+case_choisie >= CASES / 2 * (1 - joueur)) {
-                printf("Coup invalide.\n");
+        if (check_famine(&plateau, 1 - joueur)) {
+            int derniere_position = (case_choisie + plateau.cases[case_choisie]) % CASES;
+            
+            if (!(derniere_position >= CASES / 2 * (1 - joueur) && derniere_position < CASES / 2 * (2 - joueur))) {
+                printf("Coup invalide : vous devez nourrir l'adversaire.\n");
                 continue;
-                }
+            }
         }
+
 
         if (case_choisie < 0 || case_choisie >= 6 || plateau.cases[index] == 0) {
             printf("Coup invalide.\n");
