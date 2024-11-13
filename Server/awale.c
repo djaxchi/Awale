@@ -84,7 +84,7 @@ void afficher_plateau(Plateau *plateau) {
     printf("Score Joueur 1: %d | Score Joueur 2: %d\n", plateau->score[0], plateau->score[1]);
 }
 
-int main() {
+/*int main() {
     Plateau plateau;
     int joueur = 0, case_choisie;
 
@@ -142,4 +142,4 @@ int main() {
     fprintf(fichier, "Fin de la partie\n");
     fclose(fichier);
     return 0;
-}
+}*/
