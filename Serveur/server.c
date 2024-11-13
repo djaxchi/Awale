@@ -7,6 +7,8 @@
 #include "client.h"
 #include "../awale.h"
 
+static Plateau plateau;
+
 static void init(void)
 {
 #ifdef WIN32
@@ -31,26 +33,22 @@ static void app(void)
 {
    SOCKET sock = init_connection();
    char buffer[BUF_SIZE];
-   /* the index for the array */
    int actual = 0;
    int max = sock;
-   /* an array for all clients */
    Client clients[MAX_CLIENTS];
 
    fd_set rdfs;
+
+   init_plateau(&plateau);  // Initialize the Awalé board at the start of the game
 
    while(1)
    {
       int i = 0;
       FD_ZERO(&rdfs);
 
-      /* add STDIN_FILENO */
       FD_SET(STDIN_FILENO, &rdfs);
-
-      /* add the connection socket */
       FD_SET(sock, &rdfs);
 
-      /* add socket of each client */
       for(i = 0; i < actual; i++)
       {
          FD_SET(clients[i].sock, &rdfs);
@@ -62,15 +60,12 @@ static void app(void)
          exit(errno);
       }
 
-      /* something from standard input : i.e keyboard */
       if(FD_ISSET(STDIN_FILENO, &rdfs))
       {
-         /* stop process when type on keyboard */
          break;
       }
       else if(FD_ISSET(sock, &rdfs))
       {
-         /* new client */
          SOCKADDR_IN csin = { 0 };
          size_t sinsize = sizeof csin;
          int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
@@ -80,16 +75,12 @@ static void app(void)
             continue;
          }
 
-         /* after connecting the client sends its name */
          if(read_client(csock, buffer) == -1)
          {
-            /* disconnected */
             continue;
          }
 
-         /* what is the new maximum fd ? */
          max = csock > max ? csock : max;
-
          FD_SET(csock, &rdfs);
 
          Client c = { csock };
@@ -99,27 +90,49 @@ static void app(void)
       }
       else
       {
-         int i = 0;
          for(i = 0; i < actual; i++)
          {
-            /* a client is talking */
             if(FD_ISSET(clients[i].sock, &rdfs))
             {
                Client client = clients[i];
                int c = read_client(clients[i].sock, buffer);
 
-               /* client disconnected */
                if(c == 0)
                {
                   closesocket(clients[i].sock);
                   remove_client(clients, i, &actual);
-                  strncpy(buffer, client.name, BUF_SIZE - 1);
-                  strncat(buffer, " disconnected !", BUF_SIZE - strlen(buffer) - 1);
+                  snprintf(buffer, BUF_SIZE, "%s disconnected!", client.name);
                   send_message_to_all_clients(clients, client, actual, buffer, 1);
                }
                else
                {
-                  send_message_to_all_clients(clients, client, actual, buffer, 0);
+                  int case_choisie = atoi(buffer) - 1; // Convert input to 0-based index
+                  if (case_choisie >= 0 && case_choisie < 6)
+                  {
+                      int joueur = i % 2; // Alternate turns between two players
+                      if (jouer_coup(&plateau, joueur, case_choisie + (joueur == 1 ? 6 : 0)))
+                      {
+                          char plateau_buffer[BUF_SIZE];
+                          plateau_to_string(&plateau, plateau_buffer);
+                          send_message_to_all_clients(clients, client, actual, plateau_buffer, 1);
+                          if (plateau.score[0] > MAX_GRAINS / 2 || plateau.score[1] > MAX_GRAINS / 2)
+                          {
+                              snprintf(buffer, BUF_SIZE, "Joueur %d gagne !", joueur + 1);
+                              send_message_to_all_clients(clients, client, actual, buffer, 1);
+                              clear_clients(clients, actual);
+                              end_connection(sock);
+                              return;
+                          }
+                      }
+                      else
+                      {
+                          write_client(client.sock, "Coup invalide\n");
+                      }
+                  }
+                  else
+                  {
+                      write_client(client.sock, "Coup invalide : Choisissez une case entre 1 et 6\n");
+                  }
                }
                break;
             }
@@ -142,9 +155,7 @@ static void clear_clients(Client *clients, int actual)
 
 static void remove_client(Client *clients, int to_remove, int *actual)
 {
-   /* we remove the client in the array */
    memmove(clients + to_remove, clients + to_remove + 1, (*actual - to_remove - 1) * sizeof(Client));
-   /* number client - 1 */
    (*actual)--;
 }
 
@@ -155,7 +166,6 @@ static void send_message_to_all_clients(Client *clients, Client sender, int actu
    message[0] = 0;
    for(i = 0; i < actual; i++)
    {
-      /* we don't send message to the sender */
       if(sender.sock != clients[i].sock)
       {
          if(from_server == 0)
@@ -211,7 +221,6 @@ static int read_client(SOCKET sock, char *buffer)
    if((n = recv(sock, buffer, BUF_SIZE - 1, 0)) < 0)
    {
       perror("recv()");
-      /* if recv error we disonnect the client */
       n = 0;
    }
 
