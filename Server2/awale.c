@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define CASES 12
 #define MAX_GRAINS 48
@@ -69,19 +70,43 @@ int jouer_coup(Plateau *plateau, int joueur, int case_choisie) {
     return plateau->score[joueur] > MAX_GRAINS / 2;
 }
 
-void afficher_plateau(Plateau *plateau) {
-    printf("\n  --- Plateau de jeu Awalé ---\n");
-    printf("     pour quitter, entrez 0   ");
-    printf("\n      +---+---+---+---+---+---+\n      ");
+const char* afficher_plateau(Plateau *plateau) {
+    // Allocate a buffer large enough to hold the board representation
+    int buffer_size = 512;
+    char *buffer = malloc(buffer_size);
+    if (!buffer) {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    snprintf(buffer, buffer_size, "\n  --- Plateau de jeu Awalé ---\n");
+    strncat(buffer, "     pour quitter, entrez 0\n", buffer_size - strlen(buffer) - 1);
+    strncat(buffer, "      +---+---+---+---+---+---+\n      ", buffer_size - strlen(buffer) - 1);
+    
+    // Add top row
     for (int i = 11; i >= 6; i--) {
-        printf(" %2d ", plateau->cases[i]);
+        char temp[16];
+        snprintf(temp, sizeof(temp), " %2d ", plateau->cases[i]);
+        strncat(buffer, temp, buffer_size - strlen(buffer) - 1);
     }
-    printf("\nJ2    +---+---+---+---+---+---+\nJ1    +---+---+---+---+---+---+\n      ");
+    
+    strncat(buffer, "\nJ2    +---+---+---+---+---+---+\nJ1    +---+---+---+---+---+---+\n      ", buffer_size - strlen(buffer) - 1);
+    
+    // Add bottom row
     for (int i = 0; i < 6; i++) {
-        printf(" %2d ", plateau->cases[i]);
+        char temp[16];
+        snprintf(temp, sizeof(temp), " %2d ", plateau->cases[i]);
+        strncat(buffer, temp, buffer_size - strlen(buffer) - 1);
     }
-    printf("\n      +---+---+---+---+---+---+\n");
-    printf("Score Joueur 1: %d | Score Joueur 2: %d\n", plateau->score[0], plateau->score[1]);
+    
+    strncat(buffer, "\n      +---+---+---+---+---+---+\n", buffer_size - strlen(buffer) - 1);
+
+    // Add scores
+    char score_str[64];
+    snprintf(score_str, sizeof(score_str), "Score Joueur 1: %d | Score Joueur 2: %d\n", plateau->score[0], plateau->score[1]);
+    strncat(buffer, score_str, buffer_size - strlen(buffer) - 1);
+    
+    return buffer;  // Return the dynamically allocated buffer
 }
 
 /*int main() {

@@ -21,6 +21,6 @@ void enregistrer_plateau(FILE *fichier, Plateau *plateau);
 
 int jouer_coup(Plateau *plateau, int joueur, int case_choisie);
 
-void afficher_plateau(Plateau *plateau);
+const char* afficher_plateau(Plateau *plateau);
 
 #endif /* AWALE_H */

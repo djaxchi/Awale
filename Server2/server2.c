@@ -6,6 +6,15 @@
 #include <arpa/inet.h>
 #include "server2.h"
 #include "client2.h"
+#include "awale.h"
+
+typedef struct {
+    Plateau board;           // Awalé game board, assuming Plateau is defined in awale.h
+    int player_sockets[2];   // Socket descriptors of the two players
+    int current_turn;        // Indicates which player’s turn it is (0 or 1)
+} GameRoom;
+
+GameRoom game_rooms[MAX_CLIENTS];
 
 static Client clients[MAX_CLIENTS];
 static int room_counter = 0;
@@ -43,7 +52,7 @@ static void send_player_list(Client *clients, int actual) {
 }
 
 static void send_welcome_message(Client *client) {
-    const char *welcome_msg = "Welcome! Options:\n1. Show list of connected clients\n2. Disconnect\n3. Join Game <name>\n";
+    const char *welcome_msg = "Welcome! Options:\n1. Show list of connected clients\n2. Disconnect\n3. Join Game\n";
     write_client(client->sock, welcome_msg);
 }
 
@@ -95,23 +104,30 @@ static void send_duel_request(int requester_index, const char *target_name, int 
 }
 
 static void start_private_chat(int client1, int client2) {
-    // Mark both clients as being in a room
     clients[client1].in_room = 1;
     clients[client2].in_room = 1;
-
-    // Assign them the same room ID
-    int room_id = clients[client1].room_id; // room_id is already assigned in send_duel_request
+    
+    int room_id = clients[client1].room_id;
     clients[client2].room_id = room_id;
 
-    // Send messages to both clients notifying them that they are in a private chat room
-    char start_msg[BUF_SIZE];
-    
-    snprintf(start_msg, BUF_SIZE, "You are now in a private chat room with %s. Type 'exit' to leave.", clients[client2].name);
-    write_client(clients[client1].sock, start_msg);
+    GameRoom *game_room = &game_rooms[room_id];
+    game_room->player_sockets[0] = clients[client1].sock;
+    game_room->player_sockets[1] = clients[client2].sock;
+    game_room->current_turn = 0; // Start with player 0
 
-    snprintf(start_msg, BUF_SIZE, "You are now in a private chat room with %s. Type 'exit' to leave.", clients[client1].name);
+    init_plateau(&game_room->board); // Initialize the Awalé board
+
+    // Notify both clients about the game start
+    char start_msg[BUF_SIZE];
+    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n",
+             clients[client1].name, clients[client2].name, clients[client1].name);
+    write_client(clients[client1].sock, start_msg);
     write_client(clients[client2].sock, start_msg);
+
+    // Inform the first player to make a move
+    write_client(game_room->player_sockets[0], "Your turn! Choose a pit (1-6):\n");
 }
+
 
 
 
@@ -178,7 +194,7 @@ static void app(void) {
                            send_duel_request(i, target_name, actual);
                         } else if (strcmp(buffer, "1") == 0) {
                             send_player_list(clients, actual);
-                        } else if (strcmp(buffer, "2") == 0) {
+                        } else if ((strcmp(buffer, "2") == 0) && !clients[i].in_room) {
                             write_client(clients[i].sock, "Disconnecting...\n");
                             close(clients[i].sock);
                             remove_client(clients, i, &actual);
@@ -197,7 +213,41 @@ static void app(void) {
                             clients[i].room_id = -1;
                             send_welcome_message(&clients[i]);
                             send_player_list(clients, actual);
+                        }else if (clients[i].in_room) {
+                           int room_id = clients[i].room_id;
+                           GameRoom *game_room = &game_rooms[room_id];
+                           
+                           // Ensure it's the correct player’s turn
+                           if (clients[i].sock == game_room->player_sockets[game_room->current_turn]) {
+                              int move = atoi(buffer);  // Assuming client sends the pit number as text
+                              int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
+                              
+                              // Send updated board state to both players
+                              char board_state[BUF_SIZE];
+                              const char *board_str = afficher_plateau(&game_room->board);
+                              send_to_room(room_id, board_str);
+                              for (int j = 0; j < 2; j++) {
+                                    write_client(game_room->player_sockets[j], board_state);
+                              }
+
+                              // Check for game end or switch turns
+                              if (result) {
+                                    snprintf(board_state, BUF_SIZE, "Player %s wins!\n", clients[i].name);
+                                    write_client(game_room->player_sockets[0], board_state);
+                                    write_client(game_room->player_sockets[1], board_state);
+
+                                    // Reset room status
+                                    clients[i].in_room = 0;
+                                    clients[i == 0 ? 1 : 0].in_room = 0;
+                              } else {
+                                    game_room->current_turn = 1 - game_room->current_turn;
+                                    write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6):\n");
+                              }
+                           } else {
+                              write_client(clients[i].sock, "Not your turn. Wait for the other player.\n");
+                           }
                         }
+
                     }
                 }
             }
@@ -246,6 +296,14 @@ int init_connection(void) {
     return sock;
 }
 
+void send_to_room(int room_id, const char *buffer) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].in_room && clients[i].room_id == room_id) {
+            write_client(clients[i].sock, buffer);
+        }
+    }
+}
+
 void end_connection(int sock) {
     close(sock);
 }
@@ -259,11 +317,16 @@ int read_client(SOCKET sock, char *buffer) {
     return n;
 }
 
-void write_client(SOCKET sock, const char *buffer) {
+
+
+void write_client(SOCKET sock,const char *buffer) {
     if (send(sock, buffer, strlen(buffer), 0) < 0) {
         perror("send()");
     }
 }
+
+
+
 
 int main(int argc, char **argv) {
     init();
