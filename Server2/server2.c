@@ -136,7 +136,7 @@ static void start_private_chat(int client1, int client2) {
 
     // Notify both clients about the game start
     char start_msg[BUF_SIZE];
-    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n",
+    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n You can use /1 to /6 to make a move or /-1 to exit.\n You can also chat with other player.\n",
              clients[client1].name, clients[client2].name, clients[client1].name);
     char *board_state = afficher_plateau(&game_room->board);  // Get board state
     send_to_room(room_id, board_state);
@@ -347,79 +347,78 @@ static void handle_in_room(int client_index, char *buffer) {
     }
 
     GameRoom *game_room = &game_rooms[room_id];
-    printf("Room ID: %d, Current Turn: %d, Player Sockets: [%d, %d], Player Index: [%d, %d]\n",
-           room_id, game_room->current_turn, game_room->player_sockets[0], game_room->player_sockets[1],
-           game_room->player_index[0], game_room->player_index[1]);
 
     if (game_room == NULL) {
         write_client(clients[client_index].sock, "Game room does not exist.\n");
         return;
     }
 
-    
-
-    if (clients[client_index].sock == game_room->player_sockets[game_room->current_turn]) {
-        int move = atoi(buffer);
+    if (buffer[0] == '/') {  // Game command (starts with '/')
+        int move = atoi(buffer + 1);  // Skip the '/' prefix
         if (move == -1) {
-        // End game if a player inputs -1
-        int opponent_index = game_room->player_index[1 - game_room->current_turn];
-        char end_msg[BUF_SIZE];
-        snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
+            // End game if a player inputs -1
+            int opponent_index = game_room->player_index[1 - game_room->current_turn];
+            char end_msg[BUF_SIZE];
+            snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
 
-        // Notify the opponent
-        write_client(game_room->player_sockets[1 - game_room->current_turn], end_msg);
+            // Notify the opponent
+            write_client(game_room->player_sockets[1 - game_room->current_turn], end_msg);
 
-        // Reset both players
-        clients[client_index].in_room = 0;
-        clients[client_index].room_id = -1;
+            // Reset both players
+            clients[client_index].in_room = 0;
+            clients[client_index].room_id = -1;
+            clients[opponent_index].in_room = 0;
+            clients[opponent_index].room_id = -1;
 
-        clients[opponent_index].in_room = 0;
-        clients[opponent_index].room_id = -1;
-
-        // Optionally reset game room state if reusability is needed
-        memset(game_room, 0, sizeof(GameRoom));
-        send_welcome_message(&clients[client_index]);
-        send_welcome_message(&clients[opponent_index]);
-
-        return;
-        }
-        if (move < 1 || move > 6) {
-            write_client(clients[client_index].sock, "Invalid move. Choose a pit (1-6) or exit (-1).\n");
+            // Reset game room state
+            memset(game_room, 0, sizeof(GameRoom));
+            send_welcome_message(&clients[client_index]);
+            send_welcome_message(&clients[opponent_index]);
             return;
         }
 
-        int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
-        char *board_state = afficher_plateau(&game_room->board);  // Update `afficher_plateau` to return a string
-        send_to_room(room_id, board_state);
-        free(board_state);
-
-        
-
-        if (result) {
-            char end_msg[BUF_SIZE];
-            snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
-            send_to_room(room_id, end_msg);
-
-            // Reset both players
-            clients[game_room->player_index[0]].in_room = 0;
-            clients[game_room->player_index[0]].room_id = -1;
-            clients[game_room->player_index[1]].in_room = 0;
-            clients[game_room->player_index[1]].room_id = -1;
-
-            // Optionally reset game room state
-            memset(game_room, 0, sizeof(GameRoom));
-        } else {
-            game_room->current_turn = 1 - game_room->current_turn;
-            snprintf(buffer, BUF_SIZE, "Player %s made a move. It's now Player %s's turn.\n",
-                     clients[client_index].name,
-                     clients[game_room->player_index[game_room->current_turn]].name);
-            send_to_room(room_id, buffer);
-            write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6) or exit (-1):\n");
+        if (move < 1 || move > 6) {
+            write_client(clients[client_index].sock, "Invalid move. Use /1 to /6 or /-1 to exit.\n");
+            return;
         }
-    } else {
-        write_client(clients[client_index].sock, "Not your turn. Wait for the other player.\n");
+
+        if (clients[client_index].sock == game_room->player_sockets[game_room->current_turn]) {
+            int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
+            char *board_state = afficher_plateau(&game_room->board);
+            send_to_room(room_id, board_state);
+            free(board_state);
+
+            if (result) {
+                char end_msg[BUF_SIZE];
+                snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
+                send_to_room(room_id, end_msg);
+
+                // Reset both players
+                clients[game_room->player_index[0]].in_room = 0;
+                clients[game_room->player_index[0]].room_id = -1;
+                clients[game_room->player_index[1]].in_room = 0;
+                clients[game_room->player_index[1]].room_id = -1;
+
+                // Reset game room state
+                memset(game_room, 0, sizeof(GameRoom));
+            } else {
+                game_room->current_turn = 1 - game_room->current_turn;
+                snprintf(buffer, BUF_SIZE, "Player %s made a move. It's now Player %s's turn.\n",
+                         clients[client_index].name,
+                         clients[game_room->player_index[game_room->current_turn]].name);
+                send_to_room(room_id, buffer);
+                write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Use /1 to /6 or /-1 to exit.\n");
+            }
+        } else {
+            write_client(clients[client_index].sock, "Not your turn. Wait for the other player.\n");
+        }
+    } else {  // Chat message
+        char chat_msg[BUF_SIZE];
+        snprintf(chat_msg, BUF_SIZE, "%s: %s", clients[client_index].name, buffer);
+        send_to_room(room_id, chat_msg);
     }
 }
+
 
 
 
