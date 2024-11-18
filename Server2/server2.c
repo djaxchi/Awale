@@ -42,19 +42,15 @@ static void end(void) {
 #endif
 }
 
-static void send_player_list(Client *clients, int actual) {
+static void send_player_list(Client *clients, int actual, int client_index) {
     char buffer[BUF_SIZE] = "Connected clients:\n";
     for (int i = 0; i < actual; i++) {
-        if (clients[i].in_room == 0) {
+        if (clients[i].in_room == 0 && i != client_index) {
             strncat(buffer, clients[i].name, sizeof(buffer) - strlen(buffer) - 1);
             strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
         }
     }
-    for (int i = 0; i < actual; i++) {
-        if (clients[i].in_room == 0) {
-            write_client(clients[i].sock, buffer);
-        }
-    }
+    write_client(clients[client_index].sock, buffer);
 }
 
 static void send_welcome_message(Client *client) {
@@ -255,7 +251,7 @@ static void handle_set_bio(int client_index) {
 }
 
 static void handle_view_bio(int client_index, int actual) {
-    send_player_list(clients, actual);
+    send_player_list(clients, actual, client_index);
     const char *prompt = "Enter the name of the player whose bio you want to view:\n";
     write_client(clients[client_index].sock, prompt);
 
@@ -307,12 +303,12 @@ static void handle_new_connection(SOCKET sock, int *actual) {
 static void handle_disconnection(int client_index, int *actual) {
     close(clients[client_index].sock);
     remove_client(clients, client_index, actual);
-    send_player_list(clients, *actual);
+    send_player_list(clients, *actual, client_index);
 }
 
 static void handle_outside_room(int client_index, char *buffer, int actual) {
     if (strcmp(buffer, "1") == 0) {
-        send_player_list(clients, actual);
+        send_player_list(clients, actual, client_index);
         send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "2") == 0) {
         write_client(clients[client_index].sock, "Disconnecting...\n");
