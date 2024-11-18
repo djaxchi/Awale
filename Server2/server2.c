@@ -12,10 +12,12 @@
 
 
 typedef struct {
-    Plateau board;           // Awalé game board, assuming Plateau is defined in awale.h
+    Plateau board;           // Awalé game board
     int player_sockets[2];   // Socket descriptors of the two players
     int current_turn;        // Indicates which player’s turn it is (0 or 1)
     int player_index[2];     // Index of the players in the clients array
+    int observers[MAX_CLIENTS]; // Socket descriptors of observers
+    int observer_count;      // Number of observers
 } GameRoom;
 
 GameRoom game_rooms[MAX_CLIENTS];
@@ -62,7 +64,9 @@ static void send_welcome_message(Client *client) {
         "2. Disconnect\n"
         "3. Join Game\n"
         "4. Set/Update Bio\n"
-        "5. View Player Bio\n";
+        "5. View Player Bio\n"
+        "6. List ongoing games\n"
+        "To observe a game, type 'observe <room_id>'\n";
     write_client(client->sock, welcome_msg);
 }
 
@@ -321,10 +325,15 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
     } else if (strcmp(buffer, "5") == 0) {
         handle_view_bio(client_index, actual);
         send_welcome_message(&clients[client_index]);
+    }else if (strcmp(buffer, "6") == 0) {
+        list_ongoing_games(client_index);
+    } else if (strncmp(buffer, "observe ", 8) == 0) {
+        int room_id = atoi(buffer + 8);
+        observe_game(client_index, room_id);
     }else if (clients[client_index].waiting_for_response) {
-        char *target_name = buffer;
-        target_name[strcspn(target_name, "\n")] = '\0';
-        send_duel_request(client_index, target_name, actual);
+            char *target_name = buffer;
+            target_name[strcspn(target_name, "\n")] = '\0';
+            send_duel_request(client_index, target_name, actual);
     } else if (strcmp(buffer, "accept") == 0) {
         for (int j = 0; j < actual; j++) {
             if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
@@ -360,6 +369,7 @@ static void handle_in_room(int client_index, char *buffer) {
             int opponent_index = game_room->player_index[1 - game_room->current_turn];
             char end_msg[BUF_SIZE];
             snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
+            notify_observers(room_id, end_msg);
 
             // Notify the opponent
             write_client(game_room->player_sockets[1 - game_room->current_turn], end_msg);
@@ -386,12 +396,14 @@ static void handle_in_room(int client_index, char *buffer) {
             int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
             char *board_state = afficher_plateau(&game_room->board);
             send_to_room(room_id, board_state);
+            notify_observers(room_id, board_state);
             free(board_state);
 
             if (result) {
                 char end_msg[BUF_SIZE];
                 snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
                 send_to_room(room_id, end_msg);
+                notify_observers(room_id, end_msg);
 
                 // Reset both players
                 clients[game_room->player_index[0]].in_room = 0;
@@ -407,6 +419,7 @@ static void handle_in_room(int client_index, char *buffer) {
                          clients[client_index].name,
                          clients[game_room->player_index[game_room->current_turn]].name);
                 send_to_room(room_id, buffer);
+                notify_observers(room_id, buffer);
                 write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Use /1 to /6 or /-1 to exit.\n");
             }
         } else {
@@ -416,12 +429,75 @@ static void handle_in_room(int client_index, char *buffer) {
         char chat_msg[BUF_SIZE];
         snprintf(chat_msg, BUF_SIZE, "%s: %s", clients[client_index].name, buffer);
         send_to_room(room_id, chat_msg);
+        notify_observers(room_id, chat_msg);
     }
 }
 
+static void add_observer(int room_id, int observer_socket) {
+    GameRoom *game_room = &game_rooms[room_id];
 
+    if (game_room->observer_count >= MAX_CLIENTS) {
+        write_client(observer_socket, "The game room is full. Cannot observe.\n");
+        return;
+    }
 
+    game_room->observers[game_room->observer_count++] = observer_socket;
 
+    char buffer[BUF_SIZE];
+    snprintf(buffer, BUF_SIZE, "You are now observing Game Room %d.\n", room_id);
+    write_client(observer_socket, buffer);
+
+    // Show the current board state
+    char *board_state = afficher_plateau(&game_room->board);
+    write_client(observer_socket, board_state);
+    free(board_state);
+}
+
+static void notify_observers(int room_id, const char *message) {
+    GameRoom *game_room = &game_rooms[room_id];
+
+    for (int i = 0; i < game_room->observer_count; i++) {
+        write_client(game_room->observers[i], message);
+    }
+}
+
+static void list_ongoing_games(int client_index) {
+    char buffer[BUF_SIZE] = "Currently ongoing games:\n";
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (game_rooms[i].player_sockets[0] > 0 && game_rooms[i].player_sockets[1] > 0) {
+            char game_entry[128];
+            snprintf(game_entry, sizeof(game_entry), "Room ID: %d | Players: %s vs %s | Observers: %d\n",
+                     i,
+                     clients[game_rooms[i].player_index[0]].name,
+                     clients[game_rooms[i].player_index[1]].name,
+                     game_rooms[i].observer_count);
+            strncat(buffer, game_entry, sizeof(buffer) - strlen(buffer) - 1);
+        }
+    }
+
+    if (strlen(buffer) == strlen("Currently ongoing games:\n")) {
+        strncat(buffer, "No ongoing games.\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    write_client(clients[client_index].sock, buffer);
+}
+
+static void observe_game(int client_index, int room_id) {
+    if (room_id < 0 || room_id >= MAX_CLIENTS) {
+        write_client(clients[client_index].sock, "Invalid room ID.\n");
+        return;
+    }
+
+    GameRoom *game_room = &game_rooms[room_id];
+
+    if (game_room->player_sockets[0] == 0 || game_room->player_sockets[1] == 0) {
+        write_client(clients[client_index].sock, "No active game in this room.\n");
+        return;
+    }
+
+    add_observer(room_id, clients[client_index].sock);
+}
 
 
 static void app(void) {

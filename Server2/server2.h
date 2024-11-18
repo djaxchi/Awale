@@ -53,6 +53,10 @@ static void handle_set_bio(int client_index);
 static void handle_view_bio(int client_index, int actual);
 static void handle_new_connection(SOCKET sock, int *actual);
 static void handle_disconnection(int client_index, int *actual);
+static void observe_game(int client_index, int room_id);
+static void list_ongoing_games(int client_index);
+static void notify_observers(int room_id, const char *message);
+
 
 
 #endif /* guard */
