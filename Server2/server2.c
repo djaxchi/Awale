@@ -83,6 +83,7 @@ static void handle_join_game(int client_index, int actual) {
 
     // Mark client as in the process of choosing an opponent
     clients[client_index].in_room = 0;
+    clients[client_index].waiting_for_response = 1;
 }
 
 static void send_duel_request(int requester_index, const char *target_name, int actual) {
