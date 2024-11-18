@@ -73,7 +73,7 @@ static void handle_join_game(int client_index, int actual) {
     write_client(clients[client_index].sock, prompt);
 
     // Mark client as in the process of choosing an opponent
-    clients[client_index].waiting_for_response = 1;
+    clients[client_index].in_room = 0;
 }
 
 static void send_duel_request(int requester_index, const char *target_name, int actual) {
@@ -104,6 +104,8 @@ static void send_duel_request(int requester_index, const char *target_name, int 
 }
 
 static void start_private_chat(int client1, int client2) {
+    clients[client1].waiting_for_response = 0;
+    clients[client2].waiting_for_response = 0;
     clients[client1].in_room = 1;
     clients[client2].in_room = 1;
     
@@ -128,6 +130,89 @@ static void start_private_chat(int client1, int client2) {
     write_client(game_room->player_sockets[0], "Your turn! Choose a pit (1-6):\n");
 }
 
+static void handle_in_room(int client_index, char *buffer) {
+    int room_id = clients[client_index].room_id;
+    GameRoom *game_room = &game_rooms[room_id];
+
+    if (clients[client_index].sock == game_room->player_sockets[game_room->current_turn]) {
+        int move = atoi(buffer);  // Assuming client sends the pit number as text
+        if (move < 1 || move > 6) {
+            write_client(clients[client_index].sock, "Invalid move. Choose a pit (1-6).\n");
+            return;
+        }
+
+        int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);  // Apply move
+        char *board_state = afficher_plateau_str(&game_room->board);  // Get board state
+        send_to_room(room_id, board_state);
+        free(board_state);  // Free dynamically allocated memory
+
+        if (result) {
+            char end_msg[BUF_SIZE];
+            snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
+            send_to_room(room_id, end_msg);
+            reset_room_status(room_id);  // Reset room after game ends
+        } else {
+            game_room->current_turn = 1 - game_room->current_turn;
+            write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6):\n");
+        }
+    } else {
+        write_client(clients[client_index].sock, "Not your turn. Wait for the other player.\n");
+    }
+}
+
+
+static void handle_outside_room(int client_index, char *buffer, int actual) {
+    if (strcmp(buffer, "1") == 0) {
+        send_player_list(clients, actual);
+    } else if (strcmp(buffer, "2") == 0) {
+        write_client(clients[client_index].sock, "Disconnecting...\n");
+        handle_disconnection(client_index, &actual);
+    } else if (strcmp(buffer, "3") == 0) {
+        handle_join_game(client_index, actual);
+    } else if (clients[client_index].waiting_for_response) {
+        char *target_name = buffer;
+        target_name[strcspn(target_name, "\n")] = '\0';
+        send_duel_request(client_index, target_name, actual);
+    } else if (strcmp(buffer, "accept") == 0) {
+        for (int j = 0; j < actual; j++) {
+            if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
+                start_private_chat(client_index, j);
+                break;
+            }
+        }
+    }
+}
+
+static void handle_disconnection(int client_index, int *actual) {
+    close(clients[client_index].sock);
+    remove_client(clients, client_index, actual);
+    send_player_list(clients, *actual);
+}
+
+static void handle_new_connection(SOCKET sock, int *actual) {
+    SOCKADDR_IN csin = {0};
+    socklen_t sinsize = sizeof(csin);
+    int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
+    if (csock == SOCKET_ERROR) {
+        perror("accept()");
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    if (read_client(csock, buffer) <= 0) {
+        return;
+    }
+
+    Client c = {csock};
+    strncpy(c.name, buffer, sizeof(c.name) - 1);
+    c.in_room = 0;
+    c.room_id = -1;
+    clients[*actual] = c;
+    (*actual)++;
+
+    send_welcome_message(&c);
+    send_player_list(clients, *actual);
+}
 
 
 
@@ -156,98 +241,20 @@ static void app(void) {
         if (FD_ISSET(STDIN_FILENO, &rdfs)) {
             break;
         } else if (FD_ISSET(sock, &rdfs)) {
-            SOCKADDR_IN csin = {0};
-            socklen_t sinsize = sizeof(csin);
-            int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
-            if (csock == SOCKET_ERROR) {
-                perror("accept()");
-                continue;
-            }
-
-            if (read_client(csock, buffer) <= 0) {
-                continue;
-            }
-
-            Client c = {csock};
-            strncpy(c.name, buffer, sizeof(c.name) - 1);
-            c.in_room = 0;
-            c.room_id = -1;
-            c.waiting_for_response = 0;
-            clients[actual] = c;
-            actual++;
-
-            send_welcome_message(&c);
-            send_player_list(clients, actual);
+            handle_new_connection(sock, &actual);
         } else {
             for (int i = 0; i < actual; i++) {
                 if (FD_ISSET(clients[i].sock, &rdfs)) {
                     int n = read_client(clients[i].sock, buffer);
                     if (n <= 0) {
-                        close(clients[i].sock);
-                        remove_client(clients, i, &actual);
-                        send_player_list(clients, actual);
+                        handle_disconnection(i, &actual);
                     } else {
                         buffer[n] = '\0';
-                        if (clients[i].waiting_for_response) {
-                            char *target_name = buffer;
-                            target_name[strcspn(target_name, "\n")] = '\0';
-                           send_duel_request(i, target_name, actual);
-                        } else if (strcmp(buffer, "1") == 0) {
-                            send_player_list(clients, actual);
-                        } else if ((strcmp(buffer, "2") == 0) && !clients[i].in_room) {
-                            write_client(clients[i].sock, "Disconnecting...\n");
-                            close(clients[i].sock);
-                            remove_client(clients, i, &actual);
-                            send_player_list(clients, actual);
-                        } else if (strcmp(buffer, "3") == 0) {
-                            handle_join_game(i, actual);
-                        } else if (strcmp(buffer, "accept") == 0) {
-                            for (int j = 0; j < actual; j++) {
-                                if (clients[j].room_id == clients[i].room_id && i != j && clients[j].in_room == 0) {
-                                    start_private_chat(i, j);
-                                    break;
-                                }
-                            }
-                        } else if (strcmp(buffer, "exit") == 0) {
-                            clients[i].in_room = 0;
-                            clients[i].room_id = -1;
-                            send_welcome_message(&clients[i]);
-                            send_player_list(clients, actual);
-                        }else if (clients[i].in_room) {
-                           int room_id = clients[i].room_id;
-                           GameRoom *game_room = &game_rooms[room_id];
-                           
-                           // Ensure it's the correct player’s turn
-                           if (clients[i].sock == game_room->player_sockets[game_room->current_turn]) {
-                              int move = atoi(buffer);  // Assuming client sends the pit number as text
-                              int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
-                              
-                              // Send updated board state to both players
-                              char board_state[BUF_SIZE];
-                              const char *board_str = afficher_plateau(&game_room->board);
-                              send_to_room(room_id, board_str);
-                              for (int j = 0; j < 2; j++) {
-                                    write_client(game_room->player_sockets[j], board_state);
-                              }
-
-                              // Check for game end or switch turns
-                              if (result) {
-                                    snprintf(board_state, BUF_SIZE, "Player %s wins!\n", clients[i].name);
-                                    write_client(game_room->player_sockets[0], board_state);
-                                    write_client(game_room->player_sockets[1], board_state);
-
-                                    // Reset room status
-                                    clients[i].in_room = 0;
-                                    clients[i == 0 ? 1 : 0].in_room = 0;
-                              } else {
-                                    game_room->current_turn = 1 - game_room->current_turn;
-                                    write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6):\n");
-                              }
-                           } else {
-                              write_client(clients[i].sock, "Not your turn. Wait for the other player.\n");
-                           }
+                        if (clients[i].in_room) {
+                            handle_in_room(i, buffer);
+                        } else {
+                            handle_outside_room(i, buffer, actual);
                         }
-
                     }
                 }
             }
@@ -257,6 +264,7 @@ static void app(void) {
     clear_clients(clients, actual);
     end_connection(sock);
 }
+
 
 
 static void clear_clients(Client *clients, int actual) {
