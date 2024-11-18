@@ -25,6 +25,17 @@ GameRoom game_rooms[MAX_CLIENTS];
 static Client clients[MAX_CLIENTS];
 static int room_counter = 0;
 
+
+void ensure_file_exists(const char *filename) {
+    FILE *file = fopen(filename, "a"); // Open in append mode to create the file if it doesn’t exist
+    if (file) {
+        fclose(file);
+    } else {
+        perror("Failed to create file");
+        exit(EXIT_FAILURE); // Exit if the file cannot be created
+    }
+}
+
 static void init(void) {
 #ifdef WIN32
     WSADATA wsa;
@@ -34,6 +45,9 @@ static void init(void) {
         exit(EXIT_FAILURE);
     }
 #endif
+    ensure_file_exists("friends.txt");
+    ensure_file_exists("friend_requests.txt");
+    ensure_file_exists("players.txt");
 }
 
 static void end(void) {
@@ -62,8 +76,33 @@ static void send_welcome_message(Client *client) {
         "4. Set/Update Bio\n"
         "5. View Player Bio\n"
         "6. List ongoing games\n"
-        "To observe a game, type 'observe <room_id>'\n";
+        "To observe a game, type 'observe <room_id>'\n"
+        "7. Send a friend request \n"
+        "8. Accept/Decline Friend Request\n"
+        "9. View Friends List\n";
     write_client(client->sock, welcome_msg);
+}
+
+void add_player_to_registry(const char *player_name) {
+    FILE *file = fopen("players.txt", "a+");
+    if (!file) {
+        perror("Failed to open players.txt");
+        return;
+    }
+
+    char line[32];
+    while (fgets(line, sizeof(line), file)) {
+        // Remove newline and check if the player already exists
+        line[strcspn(line, "\n")] = '\0';
+        if (strcmp(line, player_name) == 0) {
+            fclose(file);
+            return; // Player already exists
+        }
+    }
+
+    // Add the new player to the registry
+    fprintf(file, "%s\n", player_name);
+    fclose(file);
 }
 
 static void handle_join_game(int client_index, int actual) {
@@ -274,6 +313,438 @@ static void handle_view_bio(int client_index, int actual) {
     }
 }
 
+int player_exists(const char *player_name) {
+    FILE *file = fopen("players.txt", "r");
+    if (!file) {
+        perror("Failed to open players.txt");
+        return 0;
+    }
+
+    char line[32];
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strcmp(line, player_name) == 0) {
+            fclose(file);
+            return 1; // Player exists
+        }
+    }
+
+    fclose(file);
+    return 0; // Player does not exist
+}
+
+//friend system
+
+int are_friends(const char *player1, const char *player2) {
+    FILE *file = fopen("friends.txt", "r");
+    if (!file) {
+        perror("Failed to open friends.txt");
+        return 0; // Assume not friends if file doesn't exist
+    }
+
+    char line[64];
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_player = strtok(line, "|");
+        char *friend_list = strtok(NULL, "\n");
+
+        if (saved_player && friend_list &&
+            (strcmp(saved_player, player1) == 0 || strcmp(saved_player, player2) == 0)) {
+            char *friend_name = strtok(friend_list, ",");
+            while (friend_name) {
+                if ((strcmp(saved_player, player1) == 0 && strcmp(friend_name, player2) == 0) ||
+                    (strcmp(saved_player, player2) == 0 && strcmp(friend_name, player1) == 0)) {
+                    fclose(file);
+                    return 1; // They are friends
+                }
+                friend_name = strtok(NULL, ",");
+            }
+        }
+    }
+
+    fclose(file);
+    return 0; // Not friends
+}
+
+void send_friend_request(const char *sender, const char *receiver) {
+    FILE *file = fopen("friend_requests.txt", "a+");
+    if (!file) {
+        perror("Failed to open friend_requests.txt");
+        return;
+    }
+
+    char line[64];
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_sender = strtok(line, "|");
+        char *saved_receiver = strtok(NULL, "\n");
+
+        if (saved_sender && saved_receiver &&
+            strcmp(saved_sender, sender) == 0 &&
+            strcmp(saved_receiver, receiver) == 0) {
+            fclose(file);
+            return; // Request already exists
+        }
+    }
+
+    // Append the new request
+    fprintf(file, "%s|%s\n", sender, receiver);
+    fclose(file);
+}
+
+int friend_request_exists(const char *sender, const char *receiver) {
+    FILE *file = fopen("friend_requests.txt", "r");
+    if (!file) {
+        return 0; // Assume no request exists if file doesn't exist
+    }
+
+    char line[64];
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_sender = strtok(line, "|");
+        char *saved_receiver = strtok(NULL, "\n");
+
+        if (saved_sender && saved_receiver &&
+            strcmp(saved_sender, sender) == 0 &&
+            strcmp(saved_receiver, receiver) == 0) {
+            fclose(file);
+            return 1; // Request exists
+        }
+    }
+
+    fclose(file);
+    return 0; // Request does not exist
+}
+
+int reciprocal_request_exists(const char *sender, const char *receiver) {
+    FILE *file = fopen("friend_requests.txt", "r");
+    if (!file) {
+        return 0; // No reciprocal request if file doesn't exist
+    }
+
+    char line[64];
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_sender = strtok(line, "|");
+        char *saved_receiver = strtok(NULL, "\n");
+
+        if (saved_sender && saved_receiver &&
+            strcmp(saved_sender, receiver) == 0 &&
+            strcmp(saved_receiver, sender) == 0) {
+            fclose(file);
+            return 1; // Reciprocal request exists
+        }
+    }
+
+    fclose(file);
+    return 0; // No reciprocal request
+}
+
+int count_pending_requests(const char *player) {
+    FILE *file = fopen("friend_requests.txt", "r");
+    if (!file) {
+        return 0; // No requests if file doesn't exist
+    }
+
+    char line[64];
+    int count = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        char *receiver = strtok(NULL, "\n");
+        if (receiver && strcmp(receiver, player) == 0) {
+            count++;
+        }
+    }
+
+    fclose(file);
+    return count;
+}
+
+static void handle_send_friend_request(int client_index) {
+    const char *prompt = "Enter the name of the player you want to send a friend request to:\n";
+    write_client(clients[client_index].sock, prompt);
+
+    char buffer[32];
+    int n = read_client(clients[client_index].sock, buffer);
+    if (n > 0) {
+        buffer[n] = '\0';
+        buffer[strcspn(buffer, "\n")] = '\0'; // Remove newline
+
+        // Prevent sending request to oneself
+        if (strcmp(clients[client_index].name, buffer) == 0) {
+            write_client(clients[client_index].sock, "You cannot send a friend request to yourself.\n");
+            return;
+        }
+
+        // Check if player exists
+        if (!player_exists(buffer)) {
+            write_client(clients[client_index].sock, "Player does not exist.\n");
+            return;
+        }
+
+        // Check if already friends
+        if (are_friends(clients[client_index].name, buffer)) {
+            write_client(clients[client_index].sock, "You are already friends with this player.\n");
+            return;
+        }
+
+        // Prevent duplicate requests
+        if (friend_request_exists(clients[client_index].name, buffer)) {
+            write_client(clients[client_index].sock, "You have already sent a friend request to this player.\n");
+            return;
+        }
+
+        // Prevent reciprocal requests
+        if (reciprocal_request_exists(clients[client_index].name, buffer)) {
+            write_client(clients[client_index].sock, "This player has already sent you a friend request. Check your pending requests.\n");
+            return;
+        }
+
+        // Enforce request cap
+        if (count_pending_requests(buffer) >= 15) {
+            write_client(clients[client_index].sock, "This player has reached the maximum number of pending friend requests.\n");
+            return;
+        }
+
+        // Send friend request
+        send_friend_request(clients[client_index].name, buffer);
+        write_client(clients[client_index].sock, "Friend request sent.\n");
+    } else {
+        write_client(clients[client_index].sock, "Failed to send friend request. Try again.\n");
+    }
+}
+
+int fetch_pending_requests(const char *receiver, char requests[][32], int *num_requests) {
+    FILE *file = fopen("friend_requests.txt", "r");
+    if (!file) {
+        perror("Failed to open friend_requests.txt");
+        *num_requests = 0;
+        return 0;
+    }
+
+    char line[64];
+    *num_requests = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        char *sender = strtok(line, "|");
+        char *saved_receiver = strtok(NULL, "\n");
+
+        if (sender && saved_receiver && strcmp(saved_receiver, receiver) == 0) {
+            strncpy(requests[*num_requests], sender, 32);
+            (*num_requests)++;
+        }
+    }
+
+    fclose(file);
+    return 1; // Success
+}
+
+static void handle_view_pending_requests(int client_index) {
+    char requests[15][32]; // Max 15 pending requests
+    int num_requests = 0;
+
+    if (!fetch_pending_requests(clients[client_index].name, requests, &num_requests)) {
+        write_client(clients[client_index].sock, "No pending friend requests.\n");
+        return;
+    }
+
+    char buffer[512] = "Pending friend requests:\n";
+    for (int i = 0; i < num_requests; i++) {
+        strncat(buffer, requests[i], sizeof(buffer) - strlen(buffer) - 1);
+        strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    if (num_requests == 0) {
+        strncat(buffer, "No pending friend requests.\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    write_client(clients[client_index].sock, buffer);
+}
+
+void accept_friend_request(const char *player, const char *friend_name) {
+    FILE *file = fopen("friends.txt", "r");
+    FILE *temp = fopen("friends_tmp.txt", "w");
+    if (!file || !temp) {
+        perror("Failed to open friends.txt or temporary file");
+        if (file) fclose(file);
+        if (temp) fclose(temp);
+        return;
+    }
+
+    char line[512];
+    int player_found = 0;
+    int friend_found = 0;
+
+    // Process the file and add the new friendship
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_player = strtok(line, "|");
+        char *friends = strtok(NULL, "\n");
+
+        if (saved_player) {
+            if (strcmp(saved_player, player) == 0) {
+                player_found = 1;
+                fprintf(temp, "%s|%s%s%s\n", saved_player, friends ? friends : "",
+                        friends ? "," : "", friend_name);
+            } else if (strcmp(saved_player, friend_name) == 0) {
+                friend_found = 1;
+                fprintf(temp, "%s|%s%s%s\n", saved_player, friends ? friends : "",
+                        friends ? "," : "", player);
+            } else {
+                fprintf(temp, "%s|%s\n", saved_player, friends ? friends : "");
+            }
+        }
+    }
+
+    // If player or friend doesn't exist in the file, add them
+    if (!player_found) {
+        fprintf(temp, "%s|%s\n", player, friend_name);
+    }
+    if (!friend_found) {
+        fprintf(temp, "%s|%s\n", friend_name, player);
+    }
+
+    fclose(file);
+    fclose(temp);
+    remove("friends.txt");
+    rename("friends_tmp.txt", "friends.txt");
+}
+
+void remove_friend_request(const char *sender, const char *receiver) {
+    FILE *file = fopen("friend_requests.txt", "r");
+    if (!file) {
+        perror("Failed to open friend_requests.txt");
+        return;
+    }
+
+    FILE *temp = fopen("friend_requests_tmp.txt", "w");
+    if (!temp) {
+        perror("Failed to open temporary file for friend_requests.txt");
+        fclose(file);
+        return;
+    }
+
+    char line[64];
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_sender = strtok(line, "|");
+        char *saved_receiver = strtok(NULL, "\n");
+
+        if (saved_sender && saved_receiver &&
+            !(strcmp(saved_sender, sender) == 0 && strcmp(saved_receiver, receiver) == 0)) {
+            fprintf(temp, "%s|%s\n", saved_sender, saved_receiver);
+        }
+    }
+
+    fclose(file);
+    fclose(temp);
+    remove("friend_requests.txt");
+    rename("friend_requests_tmp.txt", "friend_requests.txt");
+}
+
+static void handle_accept_friend_request(int client_index) {
+    char requests[15][32]; // Max 15 pending requests
+    int num_requests = 0;
+
+    // Fetch pending requests
+    if (!fetch_pending_requests(clients[client_index].name, requests, &num_requests)) {
+        write_client(clients[client_index].sock, "No pending friend requests.\n");
+        return;
+    }
+
+    if (num_requests == 0) {
+        write_client(clients[client_index].sock, "No pending friend requests.\n");
+        return;
+    }
+    char buffer[512] = "Pending friend requests:\n";
+    for (int i = 0; i < num_requests; i++) {
+        char temp[64];
+        snprintf(temp, sizeof(temp), "%d. %s\n", i + 1, requests[i]);
+        strncat(buffer, temp, sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    strncat(buffer, "Enter the number of the request to accept or decline (e.g., '1 accept' or '2 decline'):\n", sizeof(buffer) - strlen(buffer) - 1);
+    write_client(clients[client_index].sock, buffer);
+
+    char response[64];
+    int n = read_client(clients[client_index].sock, response);
+    if (n > 0) {
+        response[n] = '\0';
+        response[strcspn(response, "\n")] = '\0'; // Remove newline
+
+        int choice;
+        char action[10];
+        if (sscanf(response, "%d %s", &choice, action) == 2 && choice > 0 && choice <= num_requests) {
+            const char *selected_request = requests[choice - 1];
+
+            if (strcmp(action, "accept") == 0) {
+                accept_friend_request(clients[client_index].name, selected_request);
+                remove_friend_request(selected_request, clients[client_index].name);
+                write_client(clients[client_index].sock, "Friend request accepted.\n");
+            } else if (strcmp(action, "decline") == 0) {
+                remove_friend_request(selected_request, clients[client_index].name);
+                write_client(clients[client_index].sock, "Friend request declined.\n");
+            } else {
+                write_client(clients[client_index].sock, "Invalid action. Use 'accept' or 'decline'.\n");
+            }
+        } else {
+            write_client(clients[client_index].sock, "Invalid input. Try again.\n");
+        }
+    } else {
+        write_client(clients[client_index].sock, "Failed to read input. Try again.\n");
+    }
+}
+
+int fetch_friends(const char *player, char friends[][32], int *num_friends) {
+    FILE *file = fopen("friends.txt", "r");
+    if (!file) {
+        perror("Failed to open friends.txt");
+        *num_friends = 0;
+        return 0; // No friends if file doesn't exist
+    }
+
+    char line[512];
+    *num_friends = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        char *saved_player = strtok(line, "|");
+        char *friend_list = strtok(NULL, "\n");
+
+        if (saved_player && strcmp(saved_player, player) == 0 && friend_list) {
+            char *friend_name = strtok(friend_list, ",");
+            while (friend_name) {
+                strncpy(friends[*num_friends], friend_name, 32);
+                (*num_friends)++;
+                friend_name = strtok(NULL, ",");
+            }
+            break; // We found the player; no need to continue
+        }
+    }
+
+    fclose(file);
+    return 1; // Success
+}
+
+static void handle_view_friends_list(int client_index) {
+    char friends[50][32]; // Max 50 friends
+    int num_friends = 0;
+
+    // Fetch friends
+    if (!fetch_friends(clients[client_index].name, friends, &num_friends)) {
+        write_client(clients[client_index].sock, "You have no friends.\n");
+        return;
+    }
+
+    // If no friends, inform the player
+    if (num_friends == 0) {
+        write_client(clients[client_index].sock, "You have no friends.\n");
+        return;
+    }
+
+    // Display friends list
+    char buffer[512] = "Your friends:\n";
+    for (int i = 0; i < num_friends; i++) {
+        strncat(buffer, friends[i], sizeof(buffer) - strlen(buffer) - 1);
+        strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    write_client(clients[client_index].sock, buffer);
+}
+
 static void handle_new_connection(SOCKET sock, int *actual) {
     SOCKADDR_IN csin = {0};
     socklen_t sinsize = sizeof(csin);
@@ -295,7 +766,7 @@ static void handle_new_connection(SOCKET sock, int *actual) {
     c.waiting_for_response = 0;
     clients[*actual] = c;
     (*actual)++;
-
+    add_player_to_registry(c.name);
     send_welcome_message(&c);
 }
 
@@ -315,14 +786,20 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
         handle_disconnection(client_index, &actual);
     } else if (strcmp(buffer, "3") == 0) {
         handle_join_game(client_index, actual);
-    }else if (strcmp(buffer, "4") == 0) {
+    } else if (strcmp(buffer, "4") == 0) {
         handle_set_bio(client_index);
         send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "5") == 0) {
         handle_view_bio(client_index, actual);
         send_welcome_message(&clients[client_index]);
-    }else if (strcmp(buffer, "6") == 0) {
-        list_ongoing_games(client_index);
+    } else if (strcmp(buffer, "6") == 0) {
+        list_ongoing_games(client_index);        
+    } else if (strcmp(buffer, "7") ==0){
+        handle_send_friend_request(client_index);
+    } else if (strcmp(buffer, "8") == 0) {
+        handle_accept_friend_request(client_index);
+    } else if (strcmp(buffer, "9") == 0) {
+    handle_view_friends_list(client_index);
     } else if (strncmp(buffer, "observe ", 8) == 0) {
         int room_id = atoi(buffer + 8);
         observe_game(client_index, room_id);

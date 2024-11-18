@@ -56,7 +56,16 @@ static void handle_disconnection(int client_index, int *actual);
 static void observe_game(int client_index, int room_id);
 static void list_ongoing_games(int client_index);
 static void notify_observers(int room_id, const char *message);
-
-
+static void send_player_list(Client *clients, int actual, int client_index);
+static void send_welcome_message(Client *client);
+static void handle_join_game(int client_index, int actual);
+static void handle_outside_room(int client_index, char *buffer, int actual);
+static void handle_in_room(int client_index, char *buffer);
+static void add_player_to_registry(const char *name);
+int player_exists(const char *name);
+static void add_observer(int room_id, int observer_socket);
+int are_friends(const char *name1, const char *name2);
+void send_friend_request(const char *sender, const char *receiver);
+int friend_request_exists(const char *sender, const char *receiver);
 
 #endif /* guard */
