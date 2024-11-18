@@ -49,13 +49,14 @@ void enregistrer_plateau(FILE *fichier, Plateau *plateau) {
 }
 
 int jouer_coup(Plateau *plateau, int joueur, int case_choisie) {
-    int graines = plateau->cases[case_choisie];
-    plateau->cases[case_choisie] = 0;
-    int position = case_choisie;
+    int index = case_choisie + (joueur == 1 ? 6 : 0);
+    int graines = plateau->cases[index];
+    plateau->cases[index] = 0;
+    int position = index;
 
     while (graines > 0) {
         position = (position + 1) % CASES;
-        if (position != case_choisie) {
+        if (position != index) {
             plateau->cases[position]++;
             graines--;
         }

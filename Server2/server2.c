@@ -15,6 +15,7 @@ typedef struct {
     Plateau board;           // Awalé game board, assuming Plateau is defined in awale.h
     int player_sockets[2];   // Socket descriptors of the two players
     int current_turn;        // Indicates which player’s turn it is (0 or 1)
+    int player_index[2];     // Index of the players in the clients array
 } GameRoom;
 
 GameRoom game_rooms[MAX_CLIENTS];
@@ -123,8 +124,12 @@ static void start_private_chat(int client1, int client2) {
     clients[client2].room_id = room_id;
 
     GameRoom *game_room = &game_rooms[room_id];
+    memset(game_room, 0, sizeof(GameRoom));
     game_room->player_sockets[0] = clients[client1].sock;
     game_room->player_sockets[1] = clients[client2].sock;
+    game_room->player_index[0] = client1;
+    game_room->player_index[1] = client2;
+
     game_room->current_turn = 0; // Start with player 0
 
     init_plateau(&game_room->board); // Initialize the Awalé board
@@ -133,6 +138,9 @@ static void start_private_chat(int client1, int client2) {
     char start_msg[BUF_SIZE];
     snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n",
              clients[client1].name, clients[client2].name, clients[client1].name);
+    char *board_state = afficher_plateau(&game_room->board);  // Get board state
+    send_to_room(room_id, board_state);
+    free(board_state);  // Free dynamically allocated memory
     write_client(clients[client1].sock, start_msg);
     write_client(clients[client2].sock, start_msg);
 
@@ -243,6 +251,7 @@ static void handle_set_bio(int client_index) {
 }
 
 static void handle_view_bio(int client_index, int actual) {
+    send_player_list(clients, actual);
     const char *prompt = "Enter the name of the player whose bio you want to view:\n";
     write_client(clients[client_index].sock, prompt);
 
@@ -288,7 +297,6 @@ static void handle_new_connection(SOCKET sock, int *actual) {
     (*actual)++;
 
     send_welcome_message(&c);
-    send_player_list(clients, *actual);
 }
 
 
@@ -301,12 +309,19 @@ static void handle_disconnection(int client_index, int *actual) {
 static void handle_outside_room(int client_index, char *buffer, int actual) {
     if (strcmp(buffer, "1") == 0) {
         send_player_list(clients, actual);
+        send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "2") == 0) {
         write_client(clients[client_index].sock, "Disconnecting...\n");
         handle_disconnection(client_index, &actual);
     } else if (strcmp(buffer, "3") == 0) {
         handle_join_game(client_index, actual);
-    } else if (clients[client_index].waiting_for_response) {
+    }else if (strcmp(buffer, "4") == 0) {
+        handle_set_bio(client_index);
+        send_welcome_message(&clients[client_index]);
+    } else if (strcmp(buffer, "5") == 0) {
+        handle_view_bio(client_index, actual);
+        send_welcome_message(&clients[client_index]);
+    }else if (clients[client_index].waiting_for_response) {
         char *target_name = buffer;
         target_name[strcspn(target_name, "\n")] = '\0';
         send_duel_request(client_index, target_name, actual);
@@ -317,37 +332,96 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
                 break;
             }
         }
+    } else{
+        write_client(clients[client_index].sock, "Invalid option. Choose again.\n");
+        send_welcome_message(&clients[client_index]);
     }
 }
 
 static void handle_in_room(int client_index, char *buffer) {
     int room_id = clients[client_index].room_id;
+
+    if (room_id < 0 || room_id >= MAX_CLIENTS) {
+        write_client(clients[client_index].sock, "Invalid room ID.\n");
+        return;
+    }
+
     GameRoom *game_room = &game_rooms[room_id];
+    printf("Room ID: %d, Current Turn: %d, Player Sockets: [%d, %d], Player Index: [%d, %d]\n",
+           room_id, game_room->current_turn, game_room->player_sockets[0], game_room->player_sockets[1],
+           game_room->player_index[0], game_room->player_index[1]);
+
+    if (game_room == NULL) {
+        write_client(clients[client_index].sock, "Game room does not exist.\n");
+        return;
+    }
+
+    
 
     if (clients[client_index].sock == game_room->player_sockets[game_room->current_turn]) {
-        int move = atoi(buffer);  // Assuming client sends the pit number as text
+        int move = atoi(buffer);
+        if (move == -1) {
+        // End game if a player inputs -1
+        int opponent_index = game_room->player_index[1 - game_room->current_turn];
+        char end_msg[BUF_SIZE];
+        snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
+
+        // Notify the opponent
+        write_client(game_room->player_sockets[1 - game_room->current_turn], end_msg);
+
+        // Reset both players
+        clients[client_index].in_room = 0;
+        clients[client_index].room_id = -1;
+
+        clients[opponent_index].in_room = 0;
+        clients[opponent_index].room_id = -1;
+
+        // Optionally reset game room state if reusability is needed
+        memset(game_room, 0, sizeof(GameRoom));
+        send_welcome_message(&clients[client_index]);
+        send_welcome_message(&clients[opponent_index]);
+
+        return;
+        }
         if (move < 1 || move > 6) {
-            write_client(clients[client_index].sock, "Invalid move. Choose a pit (1-6).\n");
+            write_client(clients[client_index].sock, "Invalid move. Choose a pit (1-6) or exit (-1).\n");
             return;
         }
 
-        int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);  // Apply move
-        char *board_state = afficher_plateau(&game_room->board);  // Get board state
+        int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);
+        char *board_state = afficher_plateau(&game_room->board);  // Update `afficher_plateau` to return a string
         send_to_room(room_id, board_state);
-        free(board_state);  // Free dynamically allocated memory
+        free(board_state);
+
+        
 
         if (result) {
             char end_msg[BUF_SIZE];
             snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
             send_to_room(room_id, end_msg);
+
+            // Reset both players
+            clients[game_room->player_index[0]].in_room = 0;
+            clients[game_room->player_index[0]].room_id = -1;
+            clients[game_room->player_index[1]].in_room = 0;
+            clients[game_room->player_index[1]].room_id = -1;
+
+            // Optionally reset game room state
+            memset(game_room, 0, sizeof(GameRoom));
         } else {
             game_room->current_turn = 1 - game_room->current_turn;
-            write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6):\n");
+            snprintf(buffer, BUF_SIZE, "Player %s made a move. It's now Player %s's turn.\n",
+                     clients[client_index].name,
+                     clients[game_room->player_index[game_room->current_turn]].name);
+            send_to_room(room_id, buffer);
+            write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6) or exit (-1):\n");
         }
     } else {
         write_client(clients[client_index].sock, "Not your turn. Wait for the other player.\n");
     }
 }
+
+
 
 
 
