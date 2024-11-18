@@ -35,6 +35,7 @@ typedef struct in_addr IN_ADDR;
 
 #include "client2.h"
 
+
 static void init(void);
 static void end(void);
 static void app(void);
@@ -46,5 +47,9 @@ static void send_message_to_all_clients(Client *clients, Client client, int actu
 static void remove_client(Client *clients, int to_remove, int *actual);
 static void clear_clients(Client *clients, int actual);
 static void send_to_room(int room_id, const char *buffer);
+int fetch_bio(const char *name, char *bio, size_t bio_size);
+void set_bio(const char *name, const char *new_bio);
+static void handle_set_bio(int client_index);
+static void handle_view_bio(int client_index, int actual);
 
 #endif /* guard */
