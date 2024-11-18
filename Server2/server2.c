@@ -264,6 +264,92 @@ static void handle_view_bio(int client_index, int actual) {
     }
 }
 
+static void handle_new_connection(SOCKET sock, int *actual) {
+    SOCKADDR_IN csin = {0};
+    socklen_t sinsize = sizeof(csin);
+    int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
+    if (csock == SOCKET_ERROR) {
+        perror("accept()");
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    if (read_client(csock, buffer) <= 0) {
+        return;
+    }
+
+    Client c = {csock};
+    strncpy(c.name, buffer, sizeof(c.name) - 1);
+    c.in_room = 0;
+    c.room_id = -1;
+    c.waiting_for_response = 0;
+    clients[*actual] = c;
+    (*actual)++;
+
+    send_welcome_message(&c);
+    send_player_list(clients, *actual);
+}
+
+
+static void handle_disconnection(int client_index, int *actual) {
+    close(clients[client_index].sock);
+    remove_client(clients, client_index, actual);
+    send_player_list(clients, *actual);
+}
+
+static void handle_outside_room(int client_index, char *buffer, int actual) {
+    if (strcmp(buffer, "1") == 0) {
+        send_player_list(clients, actual);
+    } else if (strcmp(buffer, "2") == 0) {
+        write_client(clients[client_index].sock, "Disconnecting...\n");
+        handle_disconnection(client_index, &actual);
+    } else if (strcmp(buffer, "3") == 0) {
+        handle_join_game(client_index, actual);
+    } else if (clients[client_index].waiting_for_response) {
+        char *target_name = buffer;
+        target_name[strcspn(target_name, "\n")] = '\0';
+        send_duel_request(client_index, target_name, actual);
+    } else if (strcmp(buffer, "accept") == 0) {
+        for (int j = 0; j < actual; j++) {
+            if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
+                start_private_chat(client_index, j);
+                break;
+            }
+        }
+    }
+}
+
+static void handle_in_room(int client_index, char *buffer) {
+    int room_id = clients[client_index].room_id;
+    GameRoom *game_room = &game_rooms[room_id];
+
+    if (clients[client_index].sock == game_room->player_sockets[game_room->current_turn]) {
+        int move = atoi(buffer);  // Assuming client sends the pit number as text
+        if (move < 1 || move > 6) {
+            write_client(clients[client_index].sock, "Invalid move. Choose a pit (1-6).\n");
+            return;
+        }
+
+        int result = jouer_coup(&game_room->board, game_room->current_turn, move - 1);  // Apply move
+        char *board_state = afficher_plateau(&game_room->board);  // Get board state
+        send_to_room(room_id, board_state);
+        free(board_state);  // Free dynamically allocated memory
+
+        if (result) {
+            char end_msg[BUF_SIZE];
+            snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
+            send_to_room(room_id, end_msg);
+        } else {
+            game_room->current_turn = 1 - game_room->current_turn;
+            write_client(game_room->player_sockets[game_room->current_turn], "Your turn! Choose a pit (1-6):\n");
+        }
+    } else {
+        write_client(clients[client_index].sock, "Not your turn. Wait for the other player.\n");
+    }
+}
+
+
+
 static void app(void) {
     SOCKET sock = init_connection();
     char buffer[BUF_SIZE];

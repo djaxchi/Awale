@@ -51,5 +51,8 @@ int fetch_bio(const char *name, char *bio, size_t bio_size);
 void set_bio(const char *name, const char *new_bio);
 static void handle_set_bio(int client_index);
 static void handle_view_bio(int client_index, int actual);
+static void handle_new_connection(SOCKET sock, int *actual);
+static void handle_disconnection(int client_index, int *actual);
+
 
 #endif /* guard */
