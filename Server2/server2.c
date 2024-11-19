@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -18,6 +19,7 @@ typedef struct {
     int player_index[2];     // Index of the players in the clients array
     int observers[MAX_CLIENTS]; // Socket descriptors of observers
     int observer_count;      // Number of observers
+    char game_file[256];     // File path for saving the game
 } GameRoom;
 
 GameRoom game_rooms[MAX_CLIENTS];
@@ -299,6 +301,7 @@ static void start_private_chat(int client1, int client2) {
     game_room->current_turn = 0; // Start with player 0
 
     init_plateau(&game_room->board); // Initialize the Awalé board
+    initialize_game_file(game_room,clients[client1].name,clients[client2].name);
 
     // Notify both clients about the game start
     char start_msg[BUF_SIZE];
@@ -306,6 +309,7 @@ static void start_private_chat(int client1, int client2) {
              clients[client1].name, clients[client2].name, clients[client1].name);
     char *board_state = afficher_plateau(&game_room->board);  // Get board state
     send_to_room(room_id, board_state);
+    save_game_state(game_room);
     free(board_state);  // Free dynamically allocated memory
     write_client(clients[client1].sock, start_msg);
     write_client(clients[client2].sock, start_msg);
@@ -333,6 +337,57 @@ int player_exists(const char *player_name) {
 
     fclose(file);
     return 0; // Player does not exist
+}
+
+//save game system
+
+void initialize_game_file(GameRoom *game_room, const char *player1, const char *player2) {
+    // Get the current time
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+
+    // Generate a timestamp in the format YYYYMMDD_HHMMSS
+    char timestamp[20];
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", t);
+
+    // Generate a unique file name with the timestamp
+    snprintf(game_room->game_file, sizeof(game_room->game_file),"Database/Games/%s_vs_%s_%s.txt", player1, player2, timestamp);
+
+    FILE *file = fopen(game_room->game_file, "w");
+    if (file == NULL) {
+        perror("Failed to create game file");
+        return;
+    }
+
+    // Write player names
+    fprintf(file, "Players:\n%s\n%s\n", player1, player2);
+
+    fprintf(file, "Game States:\n");
+    fclose(file);
+}
+
+void save_game_state(GameRoom *game_room) {
+    FILE *file = fopen(game_room->game_file, "a");
+    if (file == NULL) {
+        perror("Failed to open game file for appending");
+        return;
+    }
+
+    enregistrer_plateau(file, &game_room->board); // Use enregistrer_plateau to format the board state
+    fprintf(file, "\n");
+
+    fclose(file);
+}
+
+void finalize_game_file(GameRoom *game_room, const char *result) {
+    FILE *file = fopen(game_room->game_file, "a");
+    if (file == NULL) {
+        perror("Failed to open game file for finalizing");
+        return;
+    }
+
+    fprintf(file, "Game Result: %s\n", result);
+    fclose(file);
 }
 
 //friend system
@@ -933,6 +988,7 @@ static void handle_in_room(int client_index, char *buffer) {
             char end_msg[BUF_SIZE];
             snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
             notify_observers(room_id, end_msg);
+            finalize_game_file(game_room, end_msg); // Replace with actual result
 
             // Notify the opponent
             write_client(game_room->player_sockets[1 - game_room->current_turn], end_msg);
@@ -960,12 +1016,14 @@ static void handle_in_room(int client_index, char *buffer) {
             char *board_state = afficher_plateau(&game_room->board);
             send_to_room(room_id, board_state);
             notify_observers(room_id, board_state);
+            save_game_state(game_room);
             free(board_state);
 
             if (result) {
                 char end_msg[BUF_SIZE];
                 snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
                 send_to_room(room_id, end_msg);
+                finalize_game_file(game_room, end_msg); // Replace with actual result
                 notify_observers(room_id, end_msg);
 
                 // Reset both players
