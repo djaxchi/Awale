@@ -1,6 +1,8 @@
 # Compiler
 CC = gcc
-CFLAGS = # Enable warnings and debugging information
+
+# Compiler flags
+CFLAGS =
 
 # Server files
 SERVER_SRC = Server2/server2.c Server2/awale.c
