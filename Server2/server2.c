@@ -5,6 +5,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <dirent.h> 
+
 #include "server2.h"
 #include "client2.h"
 #include "awale.h"
@@ -83,7 +85,11 @@ static void send_welcome_message(Client *client) {
         "To observe a game, type 'observe <room_id>'\n"
         "7. Send a friend request \n"
         "8. Accept/Decline Friend Request\n"
-        "9. View Friends List\n";
+        "9. View Friends List\n"
+        "Game Review Options:\n"
+        " - Type 'list games' to view completed games.\n"
+        " - Type 'replay <filename>' to review a completed game.\n"
+        " - Type 'next' or 'prev' to navigate through a replay.\n";
     write_client(client->sock, welcome_msg);
 }
 
@@ -939,6 +945,110 @@ static void toggle_friends_only(int client_index) {
     write_client(clients[client_index].sock, buffer);
 }
 
+static void list_saved_games(int client_index) {
+    DIR *dir = opendir("Database/Games");
+    if (!dir) {
+        write_client(clients[client_index].sock, "Failed to open the games directory.\n");
+        return;
+    }
+
+    char buffer[BUF_SIZE] = "Completed games:\n";
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {  // Only regular files
+            strncat(buffer, entry->d_name, sizeof(buffer) - strlen(buffer) - 1);
+            strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
+        }
+    }
+
+    closedir(dir);
+
+    if (strlen(buffer) == strlen("Completed games:\n")) {
+        strncat(buffer, "No completed games found.\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    write_client(clients[client_index].sock, buffer);
+}
+
+static void replay_game(int client_index, const char *game_filename) {
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "Database/Games/%s", game_filename);
+
+    FILE *file = fopen(filepath, "r");
+    if (!file) {
+        write_client(clients[client_index].sock, "Failed to open the game file. Ensure the filename is correct.\n");
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    write_client(clients[client_index].sock, "Replaying game:\n");
+
+    while (fgets(buffer, sizeof(buffer), file)) {
+        write_client(clients[client_index].sock, buffer);
+        usleep(500000);  // Pause for half a second between lines for readability
+    }
+
+    fclose(file);
+    write_client(clients[client_index].sock, "End of game replay.\n");
+}
+
+typedef struct {
+    char **states;  // Array of game states
+    int count;      // Total number of states
+    int current;    // Current state index
+} ReplaySession;
+
+static ReplaySession replay_sessions[MAX_CLIENTS];
+
+void start_replay_session(int client_index, const char *game_filename) {
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "Database/Games/%s", game_filename);
+
+    FILE *file = fopen(filepath, "r");
+    if (!file) {
+        write_client(clients[client_index].sock, "Failed to open the game file.\n");
+        return;
+    }
+
+    char line[BUF_SIZE];
+    ReplaySession *session = &replay_sessions[client_index];
+    session->count = 0;
+    session->current = 0;
+    session->states = malloc(sizeof(char *) * 100);  // Max 100 states
+
+    while (fgets(line, sizeof(line), file)) {
+        session->states[session->count] = strdup(line);
+        session->count++;
+    }
+
+    fclose(file);
+    write_client(clients[client_index].sock, "Replay session started. Use 'next' or 'prev' to navigate.\n");
+    write_client(clients[client_index].sock, session->states[0]);  // Display first state
+}
+
+void navigate_replay_session(int client_index, const char *command) {
+    ReplaySession *session = &replay_sessions[client_index];
+
+    if (strcmp(command, "next") == 0) {
+        if (session->current + 1 < session->count) {
+            session->current++;
+            write_client(clients[client_index].sock, session->states[session->current]);
+        } else {
+            write_client(clients[client_index].sock, "You are at the last state.\n");
+        }
+    } else if (strcmp(command, "prev") == 0) {
+        if (session->current > 0) {
+            session->current--;
+            write_client(clients[client_index].sock, session->states[session->current]);
+        } else {
+            write_client(clients[client_index].sock, "You are at the first state.\n");
+        }
+    } else {
+        write_client(clients[client_index].sock, "Invalid command. Use 'next' or 'prev'.\n");
+    }
+}
+
+
 static void handle_outside_room(int client_index, char *buffer, int actual) {
     if (clients[client_index].observing) {
         if (strcmp(buffer, "exit") == 0) {
@@ -991,6 +1101,13 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
     } else if (strncmp(buffer, "observe ", 8) == 0) {
         int room_id = atoi(buffer + 8);
         observe_game(client_index, room_id);
+    } else if (strcmp(buffer, "list games") == 0) {
+        list_saved_games(client_index);
+    } else if (strncmp(buffer, "replay ", 7) == 0) {
+        char *game_filename = buffer + 7;
+        start_replay_session(client_index, game_filename);
+    } else if (strcmp(buffer, "next") == 0 || strcmp(buffer, "prev") == 0) {
+        navigate_replay_session(client_index, buffer);
     } else if (strcmp(buffer, "accept") == 0) {
         for (int j = 0; j < actual; j++) {
             if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {

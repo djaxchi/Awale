@@ -68,5 +68,9 @@ int are_friends(const char *name1, const char *name2);
 void send_friend_request(const char *sender, const char *receiver);
 int friend_request_exists(const char *sender, const char *receiver);
 static void toggle_friends_only(int client_index);
+static void list_saved_games(int client_index);
+static void replay_game(int client_index, const char *game_filename);
+void start_replay_session(int client_index, const char *game_filename);
+void navigate_replay_session(int client_index, const char *command);
 
 #endif /* guard */
