@@ -45,9 +45,10 @@ static void init(void) {
         exit(EXIT_FAILURE);
     }
 #endif
-    ensure_file_exists("friends.txt");
-    ensure_file_exists("friend_requests.txt");
-    ensure_file_exists("players.txt");
+    ensure_file_exists("Database/friends.txt");
+    ensure_file_exists("Database/friend_requests.txt");
+    ensure_file_exists("Database/players.txt");
+    ensure_file_exists("Database/bios.txt");
 }
 
 static void end(void) {
@@ -84,7 +85,7 @@ static void send_welcome_message(Client *client) {
 }
 
 int fetch_bio(const char *name, char *bio, size_t bio_size) {
-    FILE *file = fopen("bios.txt", "r");
+    FILE *file = fopen("Database/bios.txt", "r");
     if (!file) {
         perror("Failed to open bios file for reading");
         return 0; // Indicate failure
@@ -107,9 +108,9 @@ int fetch_bio(const char *name, char *bio, size_t bio_size) {
 }
 
 void set_bio(const char *name, const char *new_bio) {
-    FILE *file = fopen("bios.txt", "r+");
+    FILE *file = fopen("Database/bios.txt", "r+");
     if (!file) {
-        file = fopen("bios.txt", "w");
+        file = fopen("Database/bios.txt", "w");
         if (!file) {
             perror("Failed to open bios file for writing");
             return;
@@ -117,7 +118,7 @@ void set_bio(const char *name, const char *new_bio) {
     }
 
     char line[512];
-    char temp_filename[] = "bios_tmp.txt";
+    char temp_filename[] = "Database/bios_tmp.txt";
     FILE *temp_file = fopen(temp_filename, "w");
     if (!temp_file) {
         perror("Failed to create temporary file");
@@ -149,8 +150,8 @@ void set_bio(const char *name, const char *new_bio) {
     fclose(temp_file);
 
     // Replace original file with updated file
-    remove("bios.txt");
-    rename(temp_filename, "bios.txt");
+    remove("Database/bios.txt");
+    rename(temp_filename, "Database/bios.txt");
 }
 
 static void handle_set_bio(int client_index) {
@@ -210,7 +211,7 @@ static void handle_view_bio(int client_index, int actual) {
 }
 
 void add_player_to_registry(const char *player_name) {
-    FILE *file = fopen("players.txt", "a+");
+    FILE *file = fopen("Database/players.txt", "a+");
     if (!file) {
         perror("Failed to open players.txt");
         return;
@@ -315,7 +316,7 @@ static void start_private_chat(int client1, int client2) {
 
 
 int player_exists(const char *player_name) {
-    FILE *file = fopen("players.txt", "r");
+    FILE *file = fopen("Database/players.txt", "r");
     if (!file) {
         perror("Failed to open players.txt");
         return 0;
@@ -337,7 +338,7 @@ int player_exists(const char *player_name) {
 //friend system
 
 int are_friends(const char *player1, const char *player2) {
-    FILE *file = fopen("friends.txt", "r");
+    FILE *file = fopen("Database/friends.txt", "r");
     if (!file) {
         perror("Failed to open friends.txt");
         return 0; // Assume not friends if file doesn't exist
@@ -367,7 +368,7 @@ int are_friends(const char *player1, const char *player2) {
 }
 
 void send_friend_request(const char *sender, const char *receiver) {
-    FILE *file = fopen("friend_requests.txt", "a+");
+    FILE *file = fopen("Database/friend_requests.txt", "a+");
     if (!file) {
         perror("Failed to open friend_requests.txt");
         return;
@@ -392,7 +393,7 @@ void send_friend_request(const char *sender, const char *receiver) {
 }
 
 int friend_request_exists(const char *sender, const char *receiver) {
-    FILE *file = fopen("friend_requests.txt", "r");
+    FILE *file = fopen("Database/friend_requests.txt", "r");
     if (!file) {
         return 0; // Assume no request exists if file doesn't exist
     }
@@ -415,7 +416,7 @@ int friend_request_exists(const char *sender, const char *receiver) {
 }
 
 int reciprocal_request_exists(const char *sender, const char *receiver) {
-    FILE *file = fopen("friend_requests.txt", "r");
+    FILE *file = fopen("Database/friend_requests.txt", "r");
     if (!file) {
         return 0; // No reciprocal request if file doesn't exist
     }
@@ -438,7 +439,7 @@ int reciprocal_request_exists(const char *sender, const char *receiver) {
 }
 
 int count_pending_requests(const char *player) {
-    FILE *file = fopen("friend_requests.txt", "r");
+    FILE *file = fopen("Database/friend_requests.txt", "r");
     if (!file) {
         return 0; // No requests if file doesn't exist
     }
@@ -512,7 +513,7 @@ static void handle_send_friend_request(int client_index) {
 }
 
 int fetch_pending_requests(const char *receiver, char requests[][32], int *num_requests) {
-    FILE *file = fopen("friend_requests.txt", "r");
+    FILE *file = fopen("Database/friend_requests.txt", "r");
     if (!file) {
         perror("Failed to open friend_requests.txt");
         *num_requests = 0;
@@ -559,8 +560,8 @@ static void handle_view_pending_requests(int client_index) {
 }
 
 void accept_friend_request(const char *player, const char *friend_name) {
-    FILE *file = fopen("friends.txt", "r");
-    FILE *temp = fopen("friends_tmp.txt", "w");
+    FILE *file = fopen("Database/friends.txt", "r");
+    FILE *temp = fopen("Database/friends_tmp.txt", "w");
     if (!file || !temp) {
         perror("Failed to open friends.txt or temporary file");
         if (file) fclose(file);
@@ -602,18 +603,18 @@ void accept_friend_request(const char *player, const char *friend_name) {
 
     fclose(file);
     fclose(temp);
-    remove("friends.txt");
-    rename("friends_tmp.txt", "friends.txt");
+    remove("Database/friends.txt");
+    rename("Database/friends_tmp.txt", "Database/friends.txt");
 }
 
 void remove_friend_request(const char *sender, const char *receiver) {
-    FILE *file = fopen("friend_requests.txt", "r");
+    FILE *file = fopen("Database/friend_requests.txt", "r");
     if (!file) {
         perror("Failed to open friend_requests.txt");
         return;
     }
 
-    FILE *temp = fopen("friend_requests_tmp.txt", "w");
+    FILE *temp = fopen("Database/friend_requests_tmp.txt", "w");
     if (!temp) {
         perror("Failed to open temporary file for friend_requests.txt");
         fclose(file);
@@ -633,8 +634,8 @@ void remove_friend_request(const char *sender, const char *receiver) {
 
     fclose(file);
     fclose(temp);
-    remove("friend_requests.txt");
-    rename("friend_requests_tmp.txt", "friend_requests.txt");
+    remove("Database/friend_requests.txt");
+    rename("Database/friend_requests_tmp.txt", "Database/friend_requests.txt");
 }
 
 static void handle_accept_friend_request(int client_index) {
@@ -691,7 +692,7 @@ static void handle_accept_friend_request(int client_index) {
 }
 
 int fetch_friends(const char *player, char friends[][32], int *num_friends) {
-    FILE *file = fopen("friends.txt", "r");
+    FILE *file = fopen("Database/friends.txt", "r");
     if (!file) {
         perror("Failed to open friends.txt");
         *num_friends = 0;

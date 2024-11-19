@@ -41,7 +41,5 @@ client4: $(CLIENT_OBJ)
 # Clean up build files
 clean:
 	rm -f $(SERVER_OBJ) $(CLIENT_OBJ)
-
-# Clean everything including binaries
-dist-clean: clean
 	rm -f $(SERVER_BIN) $(CLIENT_BIN)
+
