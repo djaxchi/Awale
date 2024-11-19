@@ -18,6 +18,7 @@ typedef struct {
     int player_index[2];     // Index of the players in the clients array
     int observers[MAX_CLIENTS]; // Socket descriptors of observers
     int observer_count;      // Number of observers
+    int friends_only;        // 1 if only friends can spectate, 0 otherwise
 } GameRoom;
 
 GameRoom game_rooms[MAX_CLIENTS];
@@ -302,7 +303,7 @@ static void start_private_chat(int client1, int client2) {
 
     // Notify both clients about the game start
     char start_msg[BUF_SIZE];
-    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n You can use /1 to /6 to make a move or /-1 to exit.\n You can also chat with other player.\n",
+    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n You can use /1 to /6 to make a move or /-1 to exit.\n You can also chat with other player.\n Use /friends-only to make your room private.\n",
              clients[client1].name, clients[client2].name, clients[client1].name);
     char *board_state = afficher_plateau(&game_room->board);  // Get board state
     send_to_room(room_id, board_state);
@@ -841,8 +842,46 @@ static void observe_game(int client_index, int room_id) {
         write_client(clients[client_index].sock, "No active game in this room.\n");
         return;
     }
+      // Check if the room is "friends-only"
+    if (game_room->friends_only) {
+        int is_friend = are_friends(clients[client_index].name, 
+                                    clients[game_room->player_index[0]].name) ||
+                        are_friends(clients[client_index].name, 
+                                    clients[game_room->player_index[1]].name);
+
+        if (!is_friend) {
+            write_client(clients[client_index].sock, "You can only observe games where you're friends with a player.\n");
+            return;
+        }
+    }
 
     add_observer(room_id, clients[client_index].sock, client_index);
+}
+
+static void toggle_friends_only(int client_index) {
+    int room_id = clients[client_index].room_id;
+
+    if (room_id < 0 || room_id >= MAX_CLIENTS) {
+        write_client(clients[client_index].sock, "You are not in a game room.\n");
+        return;
+    }
+
+    GameRoom *game_room = &game_rooms[room_id];
+
+    // Check if the client is one of the players
+    if (game_room->player_sockets[0] != clients[client_index].sock &&
+        game_room->player_sockets[1] != clients[client_index].sock) {
+        write_client(clients[client_index].sock, "Only players can toggle spectator privacy.\n");
+        return;
+    }
+
+    // Toggle the "friends-only" setting
+    game_room->friends_only = !game_room->friends_only;
+
+    char buffer[BUF_SIZE];
+    snprintf(buffer, BUF_SIZE, "Spectator mode updated: %s.\n",
+             game_room->friends_only ? "Friends-only" : "Public");
+    write_client(clients[client_index].sock, buffer);
 }
 
 static void handle_outside_room(int client_index, char *buffer, int actual) {
@@ -922,6 +961,11 @@ static void handle_in_room(int client_index, char *buffer) {
 
     if (game_room == NULL) {
         write_client(clients[client_index].sock, "Game room does not exist.\n");
+        return;
+    }
+
+    if (strcmp(buffer, "/friends-only") == 0) {
+        toggle_friends_only(client_index);
         return;
     }
 
