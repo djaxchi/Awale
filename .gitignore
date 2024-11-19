@@ -13,3 +13,10 @@ Client/client3
 players.txt
 friend_requests.txt
 friends.txt
+client1
+client2
+client3
+client4
+Client/client.o
+Server2/awale.o
+Server2/server2.o

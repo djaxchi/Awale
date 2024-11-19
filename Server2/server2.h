@@ -63,7 +63,7 @@ static void handle_outside_room(int client_index, char *buffer, int actual);
 static void handle_in_room(int client_index, char *buffer);
 static void add_player_to_registry(const char *name);
 int player_exists(const char *name);
-static void add_observer(int room_id, int observer_socket);
+static void add_observer(int room_id, int observer_socket, int c);
 int are_friends(const char *name1, const char *name2);
 void send_friend_request(const char *sender, const char *receiver);
 int friend_request_exists(const char *sender, const char *receiver);

@@ -69,7 +69,7 @@ static void send_player_list(Client *clients, int actual, int client_index) {
 
 static void send_welcome_message(Client *client) {
     const char *welcome_msg = 
-        "Welcome! Options:\n"
+        "Options:\n"
         "1. Show list of connected clients\n"
         "2. Disconnect\n"
         "3. Join Game\n"
@@ -81,110 +81,6 @@ static void send_welcome_message(Client *client) {
         "8. Accept/Decline Friend Request\n"
         "9. View Friends List\n";
     write_client(client->sock, welcome_msg);
-}
-
-void add_player_to_registry(const char *player_name) {
-    FILE *file = fopen("players.txt", "a+");
-    if (!file) {
-        perror("Failed to open players.txt");
-        return;
-    }
-
-    char line[32];
-    while (fgets(line, sizeof(line), file)) {
-        // Remove newline and check if the player already exists
-        line[strcspn(line, "\n")] = '\0';
-        if (strcmp(line, player_name) == 0) {
-            fclose(file);
-            return; // Player already exists
-        }
-    }
-
-    // Add the new player to the registry
-    fprintf(file, "%s\n", player_name);
-    fclose(file);
-}
-
-static void handle_join_game(int client_index, int actual) {
-    char buffer[BUF_SIZE] = "Available clients for a duel:\n";
-    for (int i = 0; i < actual; i++) {
-        if (i != client_index && clients[i].in_room == 0) {
-            strncat(buffer, clients[i].name, sizeof(buffer) - strlen(buffer) - 1);
-            strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
-        }
-    }
-
-    // Send list to the requesting client
-    write_client(clients[client_index].sock, buffer);
-
-    // Ask client to choose an opponent by name
-    const char *prompt = "Enter the name of the client you want to challenge: ";
-    write_client(clients[client_index].sock, prompt);
-
-    // Mark client as in the process of choosing an opponent
-    clients[client_index].in_room = 0;
-    clients[client_index].waiting_for_response = 1;
-}
-
-static void send_duel_request(int requester_index, const char *target_name, int actual) {
-    char buffer[BUF_SIZE];
-    int target_index = -1;
-
-    for (int i = 0; i < actual; i++) {
-        if (strcmp(clients[i].name, target_name) == 0 && clients[i].in_room == 0) {
-            target_index = i;
-            break;
-        }
-    }
-
-    if (target_index == -1) {
-        snprintf(buffer, BUF_SIZE, "Player %s is not available for a duel.\n", target_name);
-        write_client(clients[requester_index].sock, buffer);
-    } else {
-        snprintf(buffer, BUF_SIZE, "%s has challenged you to a duel! Type 'accept' to join.", clients[requester_index].name);
-        write_client(clients[target_index].sock, buffer);
-
-        snprintf(buffer, BUF_SIZE, "Duel request sent to %s. Waiting for acceptance...\n", clients[target_index].name);
-        write_client(clients[requester_index].sock, buffer);
-
-        clients[requester_index].room_id = room_counter;
-        clients[target_index].room_id = room_counter;
-        room_counter++;
-    }
-}
-
-static void start_private_chat(int client1, int client2) {
-    clients[client1].waiting_for_response = 0;
-    clients[client2].waiting_for_response = 0;
-    clients[client1].in_room = 1;
-    clients[client2].in_room = 1;
-    
-    int room_id = clients[client1].room_id;
-    clients[client2].room_id = room_id;
-
-    GameRoom *game_room = &game_rooms[room_id];
-    memset(game_room, 0, sizeof(GameRoom));
-    game_room->player_sockets[0] = clients[client1].sock;
-    game_room->player_sockets[1] = clients[client2].sock;
-    game_room->player_index[0] = client1;
-    game_room->player_index[1] = client2;
-
-    game_room->current_turn = 0; // Start with player 0
-
-    init_plateau(&game_room->board); // Initialize the Awalé board
-
-    // Notify both clients about the game start
-    char start_msg[BUF_SIZE];
-    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n You can use /1 to /6 to make a move or /-1 to exit.\n You can also chat with other player.\n",
-             clients[client1].name, clients[client2].name, clients[client1].name);
-    char *board_state = afficher_plateau(&game_room->board);  // Get board state
-    send_to_room(room_id, board_state);
-    free(board_state);  // Free dynamically allocated memory
-    write_client(clients[client1].sock, start_msg);
-    write_client(clients[client2].sock, start_msg);
-
-    // Inform the first player to make a move
-    write_client(game_room->player_sockets[0], "Your turn! Choose a pit (1-6):\n");
 }
 
 int fetch_bio(const char *name, char *bio, size_t bio_size) {
@@ -312,6 +208,111 @@ static void handle_view_bio(int client_index, int actual) {
         write_client(clients[client_index].sock, "Failed to read input. Try again.\n");
     }
 }
+
+void add_player_to_registry(const char *player_name) {
+    FILE *file = fopen("players.txt", "a+");
+    if (!file) {
+        perror("Failed to open players.txt");
+        return;
+    }
+
+    char line[32];
+    while (fgets(line, sizeof(line), file)) {
+        // Remove newline and check if the player already exists
+        line[strcspn(line, "\n")] = '\0';
+        if (strcmp(line, player_name) == 0) {
+            fclose(file);
+            return; // Player already exists
+        }
+    }
+
+    // Add the new player to the registry
+    fprintf(file, "%s\n", player_name);
+    fclose(file);
+}
+
+static void handle_join_game(int client_index, int actual) {
+    char buffer[BUF_SIZE] = "Available clients for a duel:\n";
+    for (int i = 0; i < actual; i++) {
+        if (i != client_index && clients[i].in_room == 0) {
+            strncat(buffer, clients[i].name, sizeof(buffer) - strlen(buffer) - 1);
+            strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
+        }
+    }
+
+    // Send list to the requesting client
+    write_client(clients[client_index].sock, buffer);
+
+    // Ask client to choose an opponent by name
+    const char *prompt = "Enter the name of the client you want to challenge: ";
+    write_client(clients[client_index].sock, prompt);
+
+    // Mark client as in the process of choosing an opponent
+    clients[client_index].in_room = 0;
+    clients[client_index].waiting_for_response = 1;
+}
+
+static void send_duel_request(int requester_index, const char *target_name, int actual) {
+    char buffer[BUF_SIZE];
+    int target_index = -1;
+
+    for (int i = 0; i < actual; i++) {
+        if (strcmp(clients[i].name, target_name) == 0 && clients[i].in_room == 0) {
+            target_index = i;
+            break;
+        }
+    }
+
+    if (target_index == -1) {
+        snprintf(buffer, BUF_SIZE, "Player %s is not available for a duel.\n", target_name);
+        write_client(clients[requester_index].sock, buffer);
+    } else {
+        snprintf(buffer, BUF_SIZE, "%s has challenged you to a duel! Type 'accept' to join.", clients[requester_index].name);
+        write_client(clients[target_index].sock, buffer);
+
+        snprintf(buffer, BUF_SIZE, "Duel request sent to %s. Waiting for acceptance...\n", clients[target_index].name);
+        write_client(clients[requester_index].sock, buffer);
+
+        clients[requester_index].room_id = room_counter;
+        clients[target_index].room_id = room_counter;
+        room_counter++;
+    }
+}
+
+static void start_private_chat(int client1, int client2) {
+    clients[client1].waiting_for_response = 0;
+    clients[client2].waiting_for_response = 0;
+    clients[client1].in_room = 1;
+    clients[client2].in_room = 1;
+    
+    int room_id = clients[client1].room_id;
+    clients[client2].room_id = room_id;
+
+    GameRoom *game_room = &game_rooms[room_id];
+    memset(game_room, 0, sizeof(GameRoom));
+    game_room->player_sockets[0] = clients[client1].sock;
+    game_room->player_sockets[1] = clients[client2].sock;
+    game_room->player_index[0] = client1;
+    game_room->player_index[1] = client2;
+
+    game_room->current_turn = 0; // Start with player 0
+
+    init_plateau(&game_room->board); // Initialize the Awalé board
+
+    // Notify both clients about the game start
+    char start_msg[BUF_SIZE];
+    snprintf(start_msg, BUF_SIZE, "Awalé game started between %s and %s. %s goes first.\n You can use /1 to /6 to make a move or /-1 to exit.\n You can also chat with other player.\n",
+             clients[client1].name, clients[client2].name, clients[client1].name);
+    char *board_state = afficher_plateau(&game_room->board);  // Get board state
+    send_to_room(room_id, board_state);
+    free(board_state);  // Free dynamically allocated memory
+    write_client(clients[client1].sock, start_msg);
+    write_client(clients[client2].sock, start_msg);
+
+    // Inform the first player to make a move
+    write_client(game_room->player_sockets[0], "Your turn! Choose a pit (1-6):\n");
+}
+
 
 int player_exists(const char *player_name) {
     FILE *file = fopen("players.txt", "r");
@@ -770,15 +771,104 @@ static void handle_new_connection(SOCKET sock, int *actual) {
     send_welcome_message(&c);
 }
 
-
 static void handle_disconnection(int client_index, int *actual) {
     close(clients[client_index].sock);
     remove_client(clients, client_index, actual);
     send_player_list(clients, *actual, client_index);
 }
 
+static void add_observer(int room_id, int observer_socket,int client_index) {
+    GameRoom *game_room = &game_rooms[room_id];
+
+    if (game_room->observer_count >= MAX_CLIENTS) {
+        write_client(observer_socket, "The game room is full. Cannot observe.\n");
+        return;
+    }
+
+    game_room->observers[game_room->observer_count++] = observer_socket;
+    clients[client_index].observing = 1;
+    clients[client_index].room_id = room_id;
+    char buffer[BUF_SIZE];
+    snprintf(buffer, BUF_SIZE, "You are now observing Game Room %d.\n", room_id);
+    write_client(observer_socket, buffer);
+
+    // Show the current board state
+    char *board_state = afficher_plateau(&game_room->board);
+    write_client(observer_socket, board_state);
+    free(board_state);
+}
+
+static void notify_observers(int room_id, const char *message) {
+    GameRoom *game_room = &game_rooms[room_id];
+
+    for (int i = 0; i < game_room->observer_count; i++) {
+        write_client(game_room->observers[i], message);
+    }
+}
+
+static void list_ongoing_games(int client_index) {
+    char buffer[BUF_SIZE] = "Currently ongoing games:\n";
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (game_rooms[i].player_sockets[0] > 0 && game_rooms[i].player_sockets[1] > 0) {
+            char game_entry[128];
+            snprintf(game_entry, sizeof(game_entry), "Room ID: %d | Players: %s vs %s | Observers: %d\n",
+                     i,
+                     clients[game_rooms[i].player_index[0]].name,
+                     clients[game_rooms[i].player_index[1]].name,
+                     game_rooms[i].observer_count);
+            strncat(buffer, game_entry, sizeof(buffer) - strlen(buffer) - 1);
+        }
+    }
+
+    if (strlen(buffer) == strlen("Currently ongoing games:\n")) {
+        strncat(buffer, "No ongoing games.\n", sizeof(buffer) - strlen(buffer) - 1);
+    }
+
+    write_client(clients[client_index].sock, buffer);
+}
+
+static void observe_game(int client_index, int room_id) {
+    if (room_id < 0 || room_id >= MAX_CLIENTS) {
+        write_client(clients[client_index].sock, "Invalid room ID.\n");
+        return;
+    }
+
+    GameRoom *game_room = &game_rooms[room_id];
+
+    if (game_room->player_sockets[0] == 0 || game_room->player_sockets[1] == 0) {
+        write_client(clients[client_index].sock, "No active game in this room.\n");
+        return;
+    }
+
+    add_observer(room_id, clients[client_index].sock, client_index);
+}
+
 static void handle_outside_room(int client_index, char *buffer, int actual) {
-    if (strcmp(buffer, "1") == 0) {
+    if (clients[client_index].observing) {
+        if (strcmp(buffer, "exit") == 0) {
+            // Remove the client from the observers list
+            GameRoom *game_room = &game_rooms[clients[client_index].room_id];
+            for (int j = 0; j < MAX_CLIENTS; j++) {
+                if (game_room->observers[j] == clients[client_index].sock) {
+                    game_room->observers[j] = 0;
+                    break;
+                }
+            }
+
+            clients[client_index].observing = 0;
+            clients[client_index].room_id = -1;
+
+            write_client(clients[client_index].sock, "You have left observation mode.\n");
+            send_welcome_message(&clients[client_index]);
+        } else {
+            write_client(clients[client_index].sock, "Invalid command. Type 'exit' to leave observation mode.\n");
+        }
+    }else if (clients[client_index].waiting_for_response) {
+            char *target_name = buffer;
+            target_name[strcspn(target_name, "\n")] = '\0';
+            send_duel_request(client_index, target_name, actual);
+    } else if(strcmp(buffer, "1") == 0) {
         send_player_list(clients, actual, client_index);
         send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "2") == 0) {
@@ -796,17 +886,16 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
         list_ongoing_games(client_index);        
     } else if (strcmp(buffer, "7") ==0){
         handle_send_friend_request(client_index);
+        send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "8") == 0) {
         handle_accept_friend_request(client_index);
+        send_welcome_message(&clients[client_index]);
     } else if (strcmp(buffer, "9") == 0) {
-    handle_view_friends_list(client_index);
+        handle_view_friends_list(client_index);
+        send_welcome_message(&clients[client_index]);
     } else if (strncmp(buffer, "observe ", 8) == 0) {
         int room_id = atoi(buffer + 8);
         observe_game(client_index, room_id);
-    }else if (clients[client_index].waiting_for_response) {
-            char *target_name = buffer;
-            target_name[strcspn(target_name, "\n")] = '\0';
-            send_duel_request(client_index, target_name, actual);
     } else if (strcmp(buffer, "accept") == 0) {
         for (int j = 0; j < actual; j++) {
             if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
@@ -904,72 +993,6 @@ static void handle_in_room(int client_index, char *buffer) {
         send_to_room(room_id, chat_msg);
         notify_observers(room_id, chat_msg);
     }
-}
-
-static void add_observer(int room_id, int observer_socket) {
-    GameRoom *game_room = &game_rooms[room_id];
-
-    if (game_room->observer_count >= MAX_CLIENTS) {
-        write_client(observer_socket, "The game room is full. Cannot observe.\n");
-        return;
-    }
-
-    game_room->observers[game_room->observer_count++] = observer_socket;
-
-    char buffer[BUF_SIZE];
-    snprintf(buffer, BUF_SIZE, "You are now observing Game Room %d.\n", room_id);
-    write_client(observer_socket, buffer);
-
-    // Show the current board state
-    char *board_state = afficher_plateau(&game_room->board);
-    write_client(observer_socket, board_state);
-    free(board_state);
-}
-
-static void notify_observers(int room_id, const char *message) {
-    GameRoom *game_room = &game_rooms[room_id];
-
-    for (int i = 0; i < game_room->observer_count; i++) {
-        write_client(game_room->observers[i], message);
-    }
-}
-
-static void list_ongoing_games(int client_index) {
-    char buffer[BUF_SIZE] = "Currently ongoing games:\n";
-
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (game_rooms[i].player_sockets[0] > 0 && game_rooms[i].player_sockets[1] > 0) {
-            char game_entry[128];
-            snprintf(game_entry, sizeof(game_entry), "Room ID: %d | Players: %s vs %s | Observers: %d\n",
-                     i,
-                     clients[game_rooms[i].player_index[0]].name,
-                     clients[game_rooms[i].player_index[1]].name,
-                     game_rooms[i].observer_count);
-            strncat(buffer, game_entry, sizeof(buffer) - strlen(buffer) - 1);
-        }
-    }
-
-    if (strlen(buffer) == strlen("Currently ongoing games:\n")) {
-        strncat(buffer, "No ongoing games.\n", sizeof(buffer) - strlen(buffer) - 1);
-    }
-
-    write_client(clients[client_index].sock, buffer);
-}
-
-static void observe_game(int client_index, int room_id) {
-    if (room_id < 0 || room_id >= MAX_CLIENTS) {
-        write_client(clients[client_index].sock, "Invalid room ID.\n");
-        return;
-    }
-
-    GameRoom *game_room = &game_rooms[room_id];
-
-    if (game_room->player_sockets[0] == 0 || game_room->player_sockets[1] == 0) {
-        write_client(clients[client_index].sock, "No active game in this room.\n");
-        return;
-    }
-
-    add_observer(room_id, clients[client_index].sock);
 }
 
 
