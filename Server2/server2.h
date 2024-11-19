@@ -67,5 +67,6 @@ static void add_observer(int room_id, int observer_socket, int c);
 int are_friends(const char *name1, const char *name2);
 void send_friend_request(const char *sender, const char *receiver);
 int friend_request_exists(const char *sender, const char *receiver);
+static void toggle_friends_only(int client_index);
 
 #endif /* guard */
