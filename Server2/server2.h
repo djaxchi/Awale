@@ -35,16 +35,6 @@ typedef struct in_addr IN_ADDR;
 
 #include "client2.h"
 
-typedef struct {
-    Plateau board;           // Awalé game board
-    int player_sockets[2];   // Socket descriptors of the two players
-    int current_turn;        // Indicates which player’s turn it is (0 or 1)
-    int player_index[2];     // Index of the players in the clients array
-    int observers[MAX_CLIENTS]; // Socket descriptors of observers
-    int observer_count;      // Number of observers
-    char game_file[256];     // File path for saving the game
-    int friends_only;        // 1 if only friends can spectate, 0 otherwise
-} GameRoom;
 
 
 
