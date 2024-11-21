@@ -74,7 +74,11 @@ static void send_player_list(Client *clients, int actual, int client_index) {
 }
 
 static void send_welcome_message(Client *client) {
-    const char *welcome_msg = 
+    char welcome_msg[BUF_SIZE];
+
+    // Build the welcome message with username and current ELO ranking
+    snprintf(welcome_msg, sizeof(welcome_msg), 
+        "Hey %s! Your current ELO ranking is %d.\n"
         "Options:\n"
         "1. Show list of connected clients\n"
         "2. Disconnect\n"
@@ -83,15 +87,20 @@ static void send_welcome_message(Client *client) {
         "5. View Player Bio\n"
         "6. List ongoing games\n"
         "To observe a game, type 'observe <room_id>'\n"
-        "7. Send a friend request \n"
+        "7. Send a friend request\n"
         "8. Accept/Decline Friend Request\n"
         "9. View Friends List\n"
+        "10. See top players\n"
         "Game Review Options:\n"
         " - Type 'list games' to view completed games.\n"
         " - Type 'replay <filename>' to review a completed game.\n"
-        " - Type 'next' or 'prev' to navigate through a replay.\n";
+        " - Type 'next' or 'prev' to navigate through a replay.\n",
+        client->name, get_elo_rating(client->name));
+
+    // Send the welcome message
     write_client(client->sock, welcome_msg);
 }
+
 
 int fetch_bio(const char *name, char *bio, size_t bio_size) {
     FILE *file = fopen("Database/bios.txt", "r");
@@ -220,24 +229,24 @@ static void handle_view_bio(int client_index, int actual) {
 }
 
 void add_player_to_registry(const char *player_name) {
-    FILE *file = fopen("Database/players.txt", "a+");
+    FILE *file = fopen("Database/players.txt", "r+");
     if (!file) {
         perror("Failed to open players.txt");
         return;
     }
 
-    char line[32];
-    while (fgets(line, sizeof(line), file)) {
-        // Remove newline and check if the player already exists
-        line[strcspn(line, "\n")] = '\0';
-        if (strcmp(line, player_name) == 0) {
+    char name[32];
+    int elo;
+    while (fscanf(file, "%31s %d", name, &elo) == 2) { // Read both name and ELO
+        if (strcmp(name, player_name) == 0) {
             fclose(file);
             return; // Player already exists
         }
     }
 
-    // Add the new player to the registry
-    fprintf(file, "%s\n", player_name);
+    // Move to the end of the file to add the new player
+    fseek(file, 0, SEEK_END);
+    fprintf(file, "%s %d\n", player_name, 1000); // Default ELO is 1000
     fclose(file);
 }
 
@@ -333,10 +342,10 @@ int player_exists(const char *player_name) {
         return 0;
     }
 
-    char line[32];
-    while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\n")] = '\0';
-        if (strcmp(line, player_name) == 0) {
+    char name[32];
+    int elo;
+    while (fscanf(file, "%31s %d", name, &elo) == 2) { // Read both name and ELO
+        if (strcmp(name, player_name) == 0) {
             fclose(file);
             return 1; // Player exists
         }
@@ -1048,6 +1057,124 @@ void navigate_replay_session(int client_index, const char *command) {
     }
 }
 
+//elo ranking system
+
+static void get_top_elo(char *output, size_t output_size) {
+    FILE *file = fopen("Database/players.txt", "r");
+    if (!file) {
+        perror("Failed to open players database");
+        snprintf(output, output_size, "Unable to fetch top players at the moment.\n");
+        return;
+    }
+
+    char names[100][32];  // Maximum of 100 players, with max 32 chars for names
+    int elos[100];
+    int count = 0;
+
+    // Read players from the file
+    while (fscanf(file, "%31s %d", names[count], &elos[count]) == 2) {
+        count++;
+    }
+    fclose(file);
+
+    // Sort players by ELO in descending order
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (elos[i] < elos[j]) {
+                // Swap ELOs
+                int temp_elo = elos[i];
+                elos[i] = elos[j];
+                elos[j] = temp_elo;
+
+                // Swap names
+                char temp_name[32];
+                strncpy(temp_name, names[i], sizeof(temp_name));
+                strncpy(names[i], names[j], sizeof(names[i]));
+                strncpy(names[j], temp_name, sizeof(names[j]));
+            }
+        }
+    }
+
+    // Format the top 5 players
+    snprintf(output, output_size, "Top 5 Players:\n");
+    for (int i = 0; i < count && i < 5; i++) {
+        char line[64];
+        snprintf(line, sizeof(line), "%d. %s: %d ELO\n", i + 1, names[i], elos[i]);
+        strncat(output, line, output_size - strlen(output) - 1);
+    }
+}
+
+void update_player_elo(const char *player_name, int result) {
+    // result: 1 for win, -1 for loss
+    const int elo_change = 30; // Points added/subtracted per game
+    const char *file_path = "Database/players.txt";
+
+    FILE *file = fopen(file_path, "r");
+    if (!file) {
+        perror("Failed to open players database for reading");
+        return;
+    }
+
+    char temp_file_path[] = "Database/players_temp.txt";
+    FILE *temp_file = fopen(temp_file_path, "w");
+    if (!temp_file) {
+        perror("Failed to open temporary file for writing");
+        fclose(file);
+        return;
+    }
+
+    char name[32];
+    int elo;
+    int found = 0;
+
+    // Read each line, update the player's ELO if found, and write to the temp file
+    while (fscanf(file, "%31s %d", name, &elo) == 2) {
+        if (strcmp(name, player_name) == 0) {
+            elo += result * elo_change; // Update the ELO based on the result
+            found = 1;
+        }
+        fprintf(temp_file, "%s %d\n", name, elo);
+    }
+
+    // If the player was not found, add them to the file with a starting ELO
+    if (!found) {
+        int initial_elo = 1000 + result * elo_change;
+        fprintf(temp_file, "%s %d\n", player_name, initial_elo);
+    }
+
+    fclose(file);
+    fclose(temp_file);
+
+    // Replace the original file with the updated one
+    if (remove(file_path) != 0) {
+        perror("Failed to remove original players database");
+        return;
+    }
+    if (rename(temp_file_path, file_path) != 0) {
+        perror("Failed to rename temporary file to players database");
+    }
+}
+
+int get_elo_rating(const char *player_name){
+    FILE *file = fopen("Database/players.txt", "r");
+    if (!file) {
+        perror("Failed to open players database");
+        return 0;
+    }
+
+    char name[32];
+    int elo;
+    while (fscanf(file, "%31s %d", name, &elo) == 2) {
+        if (strcmp(name, player_name) == 0) {
+            fclose(file);
+            return elo;
+        }
+    }
+
+    fclose(file);
+    return 0;
+}
+
 
 static void handle_outside_room(int client_index, char *buffer, int actual) {
     if (clients[client_index].observing) {
@@ -1098,7 +1225,12 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
     } else if (strcmp(buffer, "9") == 0) {
         handle_view_friends_list(client_index);
         send_welcome_message(&clients[client_index]);
-    } else if (strncmp(buffer, "observe ", 8) == 0) {
+    } else if (strcmp(buffer, "10") == 0) {
+        char top_players[BUF_SIZE];
+        get_top_elo(top_players, sizeof(top_players));
+        write_client(clients[client_index].sock, top_players);
+        send_welcome_message(&clients[client_index]);
+    }else if (strncmp(buffer, "observe ", 8) == 0) {
         int room_id = atoi(buffer + 8);
         observe_game(client_index, room_id);
     } else if (strcmp(buffer, "list games") == 0) {
@@ -1148,6 +1280,8 @@ static void handle_in_room(int client_index, char *buffer) {
             int opponent_index = game_room->player_index[1 - game_room->current_turn];
             char end_msg[BUF_SIZE];
             snprintf(end_msg, BUF_SIZE, "Player %s disconnected. You won!\n", clients[client_index].name);
+            update_player_elo(clients[client_index].name, -1);
+            update_player_elo(clients[opponent_index].name, 1);
             notify_observers(room_id, end_msg);
             finalize_game_file(game_room, end_msg); // Replace with actual result
 
@@ -1181,8 +1315,12 @@ static void handle_in_room(int client_index, char *buffer) {
             free(board_state);
 
             if (result) {
+                int opponent_index = game_room->player_index[1 - game_room->current_turn];
                 char end_msg[BUF_SIZE];
                 snprintf(end_msg, BUF_SIZE, "Player %s wins!\n", clients[client_index].name);
+                update_player_elo(clients[client_index].name, 1);
+                update_player_elo(clients[opponent_index].name, -1);
+
                 send_to_room(room_id, end_msg);
                 finalize_game_file(game_room, end_msg); // Replace with actual result
                 notify_observers(room_id, end_msg);

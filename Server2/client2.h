@@ -10,6 +10,7 @@ typedef struct {
     int room_id;   // Room ID if in a private room
     int waiting_for_response;  // 1 if waiting for a response to a duel request
     int observing; //1 if observing a game
+    int elo_rating; //win +30 lose -30
 } Client;
 
 #endif /* guard */
