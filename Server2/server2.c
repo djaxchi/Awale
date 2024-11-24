@@ -286,7 +286,7 @@ static void send_duel_request(int requester_index, const char *target_name, int 
         snprintf(buffer, BUF_SIZE, "Player %s is not available for a duel.\n", target_name);
         write_client(clients[requester_index].sock, buffer);
     } else {
-        snprintf(buffer, BUF_SIZE, "%s has challenged you to a duel! Type 'accept' to join.", clients[requester_index].name);
+        snprintf(buffer, BUF_SIZE, "%s has challenged you to a duel! Type 'accept' to join, or 'refuse' to decline and go back", clients[requester_index].name);
         write_client(clients[target_index].sock, buffer);
 
         snprintf(buffer, BUF_SIZE, "Duel request sent to %s. Waiting for acceptance...\n", clients[target_index].name);
@@ -1245,6 +1245,27 @@ static void handle_outside_room(int client_index, char *buffer, int actual) {
             if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
                 start_private_chat(client_index, j);
                 break;
+            }
+        }
+    } else if (strcmp(buffer, "refuse") == 0) {
+        for (int j = 0; j < actual; j++) { // Loop through all connected clients
+            if (clients[j].room_id == clients[client_index].room_id && j != client_index && clients[j].in_room == 0) {
+                // Notify the requester about the refusal
+                char refuse_msg[BUF_SIZE];
+                snprintf(refuse_msg, sizeof(refuse_msg), "Your game request was refused by %s.\n", clients[client_index].name);
+                write_client(clients[j].sock, refuse_msg);
+
+                // Reset the room state for both clients
+                clients[j].room_id = -1;
+                clients[j].in_room = 0;
+                clients[j].waiting_for_response = 0;
+
+                clients[client_index].room_id = -1;
+                clients[client_index].in_room = 0;
+
+                // Notify the refusing client about the action
+                write_client(clients[client_index].sock, "You refused the game request.\n");
+                break; // Exit the loop after processing the refusal
             }
         }
     } else{
